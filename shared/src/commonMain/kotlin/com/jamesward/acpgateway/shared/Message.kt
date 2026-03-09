@@ -1,0 +1,95 @@
+package com.jamesward.acpgateway.shared
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+@Serializable
+sealed class WsMessage {
+
+    @Serializable
+    @SerialName("prompt")
+    data class Prompt(
+        val text: String,
+        val screenshot: String? = null,
+        val files: List<FileAttachment> = emptyList(),
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("agent_text")
+    data class AgentText(val text: String) : WsMessage()
+
+    @Serializable
+    @SerialName("agent_thought")
+    data class AgentThought(val text: String) : WsMessage()
+
+    @Serializable
+    @SerialName("tool_call")
+    data class ToolCall(
+        val toolCallId: String,
+        val title: String,
+        val status: String,
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("permission_request")
+    data class PermissionRequest(
+        val toolCallId: String,
+        val title: String,
+        val options: List<PermissionOptionInfo>,
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("permission_response")
+    data class PermissionResponse(
+        val toolCallId: String,
+        val optionId: String,
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("turn_complete")
+    data class TurnComplete(
+        val stopReason: String,
+        val renderedHtml: String? = null,
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("error")
+    data class Error(val message: String) : WsMessage()
+
+    @Serializable
+    @SerialName("connected")
+    data class Connected(
+        val agentName: String,
+        val agentVersion: String,
+        val cwd: String? = null,
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("cancel")
+    data object Cancel : WsMessage()
+
+    @Serializable
+    @SerialName("diagnose")
+    data object Diagnose : WsMessage()
+}
+
+@Serializable
+data class FileAttachment(
+    val name: String,
+    val mimeType: String,
+    val data: String,
+)
+
+@Serializable
+data class PermissionOptionInfo(
+    val optionId: String,
+    val name: String,
+    val kind: String,
+)
+
+@Serializable
+data class ChatEntry(
+    val role: String,
+    val content: String,
+    val timestamp: Long,
+)
