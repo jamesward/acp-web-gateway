@@ -56,6 +56,17 @@ class GatewaySession(
     @Volatile
     var activePermissionHtml: String? = null
 
+    // Gateway-internal slash commands (e.g. /simulate, /autopilot)
+    @Volatile
+    var internalCommands: List<CommandInfo> = emptyList()
+
+    // Available slash commands from the ACP agent
+    @Volatile
+    var availableCommands: List<CommandInfo> = emptyList()
+
+    /** All commands: internal + agent-provided. */
+    val allCommands: List<CommandInfo> get() = internalCommands + availableCommands
+
     suspend fun broadcast(msg: WsMessage) {
         val text = broadcastJson.encodeToString(WsMessage.serializer(), msg)
         val frame = Frame.Text(text)
@@ -71,6 +82,30 @@ class GatewaySession(
     }
 
     fun startEventForwarding() {
+        // Handle agent notifications that arrive outside of prompt flows
+        clientOps.onNotification = { notification ->
+            when (notification) {
+                is SessionUpdate.AvailableCommandsUpdate -> {
+                    val commands = notification.availableCommands.map { cmd ->
+                        CommandInfo(
+                            name = cmd.name,
+                            description = cmd.description,
+                            inputHint = (cmd.input as? AvailableCommandInput.Unstructured)?.hint,
+                        )
+                    }
+                    availableCommands = commands
+                    broadcast(WsMessage.AvailableCommands(allCommands))
+                }
+                else -> {}
+            }
+        }
+
+        // Replay any notifications that arrived before the handler was set
+        // (e.g. AvailableCommandsUpdate sent during session creation)
+        scope.launch {
+            clientOps.drainBufferedNotifications()
+        }
+
         scope.launch {
             for (pending in clientOps.pendingPermissions) {
                 val html = permissionContentHtml(

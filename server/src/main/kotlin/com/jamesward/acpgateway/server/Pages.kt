@@ -60,8 +60,6 @@ fun HTML.chatPage(
                 }
             }
 
-            // Separator + CWD
-            div(classes = "${Css.HEADER_SEP} ${Css.HIDDEN}") { id = "header-sep" }
             div(classes = "${Css.HEADER_CWD} ${Css.HIDDEN}") { id = Id.HEADER_CWD }
 
             if (dev) {
@@ -93,6 +91,9 @@ fun HTML.chatPage(
             }
         }
         div(classes = Css.INPUT_BAR) {
+            div(classes = "${Css.AUTOCOMPLETE} ${Css.HIDDEN}") {
+                id = Id.AUTOCOMPLETE
+            }
             div(classes = "${Css.FILE_PREVIEW} ${Css.HIDDEN}") {
                 id = Id.FILE_PREVIEW
             }

@@ -22,6 +22,7 @@ object Id {
     const val PERMISSION_DIALOG = "permission-dialog"
     const val PERMISSION_CONTENT = "permission-content"
     const val SCREENSHOT_TOGGLE = "screenshot-toggle"
+    const val AUTOCOMPLETE = "autocomplete"
     const val TASK_STATUS_WRAP = "task-status-wrap"
     const val TASK_STATUS = "task-status"
     const val THOUGHT_ELAPSED = "thought-elapsed"
@@ -129,6 +130,13 @@ object Css {
     const val CONTENT_BODY = "content-body"
     const val CONTENT_META = "content-meta"
     const val THOUGHT_ELAPSED = "thought-elapsed"
+
+    // Autocomplete
+    const val AUTOCOMPLETE = "autocomplete"
+    const val AUTOCOMPLETE_ITEM = "autocomplete-item"
+    const val AUTOCOMPLETE_ACTIVE = "autocomplete-active"
+    const val AUTOCOMPLETE_NAME = "autocomplete-name"
+    const val AUTOCOMPLETE_DESC = "autocomplete-desc"
 
     // Utility
     const val HIDDEN = "hidden"
@@ -441,6 +449,7 @@ fun appStylesheet(): String = CssBuilder().apply {
         whiteSpace = WhiteSpace.normal
     }
     ".${Css.MSG_CONTENT} pre" {
+        fontFamily = "monospace"
         backgroundColor = Color("#030712")
         padding = Padding(16.px)
         borderRadius = 8.px
@@ -448,7 +457,15 @@ fun appStylesheet(): String = CssBuilder().apply {
         margin = Margin(8.px, 0.px)
     }
     ".${Css.MSG_CONTENT} code" {
+        fontFamily = "monospace"
         fontSize = 14.px
+        backgroundColor = Color("#1e293b")
+        padding = Padding(2.px, 6.px)
+        put("border-radius", "4px")
+    }
+    ".${Css.MSG_CONTENT} pre code" {
+        backgroundColor = Color.transparent
+        padding = Padding(0.px)
     }
     ".${Css.MSG_CONTENT} p" {
         margin = Margin(4.px, 0.px)
@@ -751,6 +768,7 @@ fun appStylesheet(): String = CssBuilder().apply {
         borderTop = Border(1.px, BorderStyle.solid, Colors.gray700)
         backgroundColor = Colors.gray800
         padding = Padding(16.px)
+        position = Position.relative
     }
     ".${Css.INPUT_FORM}" {
         display = Display.flex
@@ -937,6 +955,43 @@ fun appStylesheet(): String = CssBuilder().apply {
         cursor = Cursor.pointer
         put("-webkit-mask-image", "linear-gradient(to bottom, transparent, black 30px)")
         put("mask-image", "linear-gradient(to bottom, transparent, black 30px)")
+    }
+
+    // ---- Autocomplete ----
+    ".${Css.AUTOCOMPLETE}" {
+        position = Position.absolute
+        bottom = 100.pct
+        left = 0.px
+        right = 0.px
+        backgroundColor = Colors.gray800
+        borderTop = Border(1.px, BorderStyle.solid, Colors.gray700)
+        display = Display.flex
+        put("flex-wrap", "wrap")
+        gap = 6.px
+        padding = Padding(8.px)
+        put("z-index", "20")
+    }
+    ".${Css.AUTOCOMPLETE_ITEM}" {
+        padding = Padding(6.px, 12.px)
+        borderRadius = 8.px
+        cursor = Cursor.pointer
+        backgroundColor = Colors.gray700
+        border = Border(1.px, BorderStyle.solid, Colors.gray600)
+    }
+    ".${Css.AUTOCOMPLETE_ITEM}:hover" {
+        backgroundColor = Colors.gray600
+    }
+    ".${Css.AUTOCOMPLETE_ACTIVE}" {
+        backgroundColor = Colors.gray600
+        border = Border(1.px, BorderStyle.solid, Colors.blue500)
+    }
+    ".${Css.AUTOCOMPLETE_NAME}" {
+        color = Colors.gray100
+        fontWeight = FontWeight.w500
+        fontSize = 13.px
+    }
+    ".${Css.AUTOCOMPLETE_DESC}" {
+        display = Display.none
     }
 
     // ---- Hidden (must be last to override display set by other classes) ----

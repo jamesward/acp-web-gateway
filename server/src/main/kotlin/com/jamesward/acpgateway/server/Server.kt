@@ -8,6 +8,7 @@ import io.ktor.server.http.content.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import com.jamesward.acpgateway.shared.CommandInfo
 import com.jamesward.acpgateway.shared.WsMessage
 import com.jamesward.acpgateway.shared.appStylesheet
 import io.ktor.server.routing.*
@@ -95,6 +96,7 @@ fun Application.module(
     dev: Boolean = false,
     onReload: () -> Unit = {},
     commandHandler: CommandHandler? = null,
+    internalCommands: List<CommandInfo> = emptyList(),
 ) {
     install(ContentNegotiation) {
         json()
@@ -132,7 +134,7 @@ fun Application.module(
                         close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No session available"))
                         return@webSocket
                     }
-                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler)
+                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler, internalCommands = internalCommands)
                 }
             }
 
@@ -179,7 +181,7 @@ fun Application.module(
                         close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Session not found"))
                         return@webSocket
                     }
-                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler)
+                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler, internalCommands = internalCommands)
                 }
             }
         }
@@ -228,6 +230,7 @@ data class ServerConfig(
     val debug: Boolean,
     val dev: Boolean,
     val commandHandler: CommandHandler? = null,
+    val internalCommands: List<CommandInfo> = emptyList(),
 )
 
 fun parseServerConfig(args: Array<String>): ServerConfig = ServerConfig(
@@ -268,6 +271,7 @@ fun startServer(config: ServerConfig) {
                 Runtime.getRuntime().halt(0)
             },
             commandHandler = config.commandHandler,
+            internalCommands = config.internalCommands,
         )
     }
     server.start(wait = false)

@@ -80,9 +80,6 @@ fun thoughtRenderedHtml(html: String, thoughtId: String? = null, usage: String? 
             summary(classes = Css.CONTENT_HEADER) {
                 span(classes = Css.CONTENT_LABEL) { +"Thinking" }
                 span(classes = Css.THOUGHT_ELAPSED) { id = Id.THOUGHT_ELAPSED }
-                if (usage != null) {
-                    span(classes = Css.CONTENT_META) { +usage }
-                }
                 span(classes = Css.TOOL_CHEVRON) { +"\u25B8" }
             }
             div(classes = "${Css.CONTENT_BODY} ${Css.MSG_THOUGHT} ${Css.MSG_CONTENT}") {
@@ -170,9 +167,6 @@ fun toolBlockHtml(
                                 summary(classes = "${Css.TOOL_ROW_HEADER} ${Css.TOOL_ROW_CLICKABLE}") {
                                     toolEntryIcon(entry.status, entry.kind)
                                     toolEntryTitle(entry)
-                                    if (entry.location != null) {
-                                        span(classes = Css.TOOL_LOCATION) { +entry.location.substringAfterLast('/') }
-                                    }
                                     span(classes = Css.TOOL_RESULT_CHEVRON) { +"\u25B8" }
                                 }
                                 if (entry.contentHtml.isNotEmpty()) {
@@ -185,9 +179,6 @@ fun toolBlockHtml(
                             div(classes = Css.TOOL_ROW_HEADER) {
                                 toolEntryIcon(entry.status, entry.kind)
                                 toolEntryTitle(entry)
-                                if (entry.location != null) {
-                                    span(classes = Css.TOOL_LOCATION) { +entry.location.substringAfterLast('/') }
-                                }
                             }
                         }
                     }

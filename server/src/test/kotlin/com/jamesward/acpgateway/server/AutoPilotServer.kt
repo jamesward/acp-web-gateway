@@ -1,5 +1,6 @@
 package com.jamesward.acpgateway.server
 
+import com.jamesward.acpgateway.shared.CommandInfo
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("AutoPilotServer")
@@ -23,5 +24,6 @@ fun main(args: Array<String>) {
 
     startServer(config.copy(
         commandHandler = { prompt, session -> autoPilot.handleCommand(prompt, session) },
+        internalCommands = listOf(CommandInfo("autopilot", "Take a screenshot of the UI and send it to the agent for analysis")),
     ))
 }

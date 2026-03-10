@@ -89,6 +89,10 @@ sealed class WsMessage {
     @Serializable
     @SerialName("browser_state_response")
     data class BrowserStateResponse(val requestId: String, val state: String) : WsMessage()
+
+    @Serializable
+    @SerialName("available_commands")
+    data class AvailableCommands(val commands: List<CommandInfo>) : WsMessage()
 }
 
 @Serializable
@@ -146,6 +150,13 @@ data class PermissionOptionInfo(
     val optionId: String,
     val name: String,
     val kind: PermissionKind,
+)
+
+@Serializable
+data class CommandInfo(
+    val name: String,
+    val description: String,
+    val inputHint: String? = null,
 )
 
 @Serializable

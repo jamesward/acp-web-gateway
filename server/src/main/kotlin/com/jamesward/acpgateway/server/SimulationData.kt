@@ -29,7 +29,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in thinkingChunks) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text(chunk))))
-            delay(1000)
+            delay(333)
         }
 
         // ── Phase 2: Read a file (5s) ──
@@ -40,7 +40,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/main/kotlin/Example.kt")),
         )))
-        delay(1500)
+        delay(500)
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
             toolCallId = ToolCallId("tc-read-1"),
             title = "Read src/main/kotlin/Example.kt",
@@ -49,7 +49,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
                 "package com.example\n\nimport kotlinx.coroutines.*\n\nfun main() = runBlocking {\n    println(\"Hello from coroutines!\")\n    launch {\n        delay(1000)\n        println(\"World!\")\n    }\n    println(\"Waiting...\")\n}"
             ))),
         )))
-        delay(1000)
+        delay(333)
 
         // Usage update after initial thinking + read
         emit(Event.SessionUpdateEvent(SessionUpdate.UsageUpdate(
@@ -90,7 +90,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in fundamentals) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(500)
+            delay(167)
         }
 
         // ── Phase 4: Read build config (5s) ──
@@ -101,7 +101,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("build.gradle.kts")),
         )))
-        delay(1500)
+        delay(500)
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
             toolCallId = ToolCallId("tc-read-2"),
             title = "Read build.gradle.kts",
@@ -110,7 +110,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
                 "dependencies {\n    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0\")\n    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.9.0\")\n    testImplementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0\")\n}"
             ))),
         )))
-        delay(1000)
+        delay(333)
 
         // More thinking
         val moreThinking = listOf(
@@ -121,7 +121,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in moreThinking) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text(chunk))))
-            delay(750)
+            delay(250)
         }
 
         // ── Phase 5: Suspend functions section (25s) ──
@@ -155,7 +155,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in suspendSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(500)
+            delay(167)
         }
 
         // ── Phase 6: Write a file (8s) ──
@@ -166,7 +166,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/main/kotlin/CoroutineBasics.kt")),
         )))
-        delay(2000)
+        delay(667)
 
         val basicsFile = """package com.example
 
@@ -203,7 +203,7 @@ fun main() = runBlocking {
                 newText = basicsFile,
             )),
         )))
-        delay(1000)
+        delay(333)
 
         // ── Phase 7: Structured Concurrency section (30s) ──
         val structuredSection = listOf(
@@ -242,7 +242,7 @@ fun main() = runBlocking {
         )
         for (chunk in structuredSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(450)
+            delay(150)
         }
 
         // ── Phase 8: Run command (8s) ──
@@ -252,7 +252,7 @@ fun main() = runBlocking {
             kind = ToolKind.EXECUTE,
             status = ToolCallStatus.IN_PROGRESS,
         )))
-        delay(2500)
+        delay(833)
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
             toolCallId = ToolCallId("tc-run-1"),
             title = "Run ./gradlew :app:run",
@@ -261,7 +261,7 @@ fun main() = runBlocking {
                 "Fetching data concurrently...\nData for id=1\nData for id=2\nData for id=3\nData for id=4\nData for id=5\nData for id=6\nData for id=7\nData for id=8\nData for id=9\nData for id=10\nCompleted in 1023ms (should be ~1000ms, not ~10000ms)"
             ))),
         )))
-        delay(1500)
+        delay(500)
 
         // Usage update mid-turn
         emit(Event.SessionUpdateEvent(SessionUpdate.UsageUpdate(
@@ -302,7 +302,7 @@ fun main() = runBlocking {
         )
         for (chunk in flowSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(500)
+            delay(167)
         }
 
         // ── Phase 10: Write advanced example (8s) ──
@@ -313,7 +313,7 @@ fun main() = runBlocking {
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/main/kotlin/FlowExample.kt")),
         )))
-        delay(2000)
+        delay(667)
 
         val flowFile = """package com.example
 
@@ -354,7 +354,7 @@ fun main() = runBlocking {
                 newText = flowFile,
             )),
         )))
-        delay(1000)
+        delay(333)
 
         // ── Phase 11: Error handling section (20s) ──
         val errorSection = listOf(
@@ -388,7 +388,7 @@ fun main() = runBlocking {
         )
         for (chunk in errorSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(400)
+            delay(133)
         }
 
         // ── Phase 12: Read test file (5s) ──
@@ -399,7 +399,7 @@ fun main() = runBlocking {
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/test/kotlin/CoroutineTest.kt")),
         )))
-        delay(1500)
+        delay(500)
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
             toolCallId = ToolCallId("tc-read-3"),
             title = "Read src/test/kotlin/CoroutineTest.kt",
@@ -408,7 +408,7 @@ fun main() = runBlocking {
                 "class CoroutineTest {\n    @Test\n    fun `concurrent fetch completes in bounded time`() = runTest {\n        val results = processAll((1..100).toList())\n        assertEquals(100, results.size)\n    }\n\n    @Test\n    fun `cancellation propagates to children`() = runTest {\n        val job = launch {\n            repeat(1000) { i ->\n                delay(100)\n                println(\"Working ${'$'}i\")\n            }\n        }\n        delay(350)\n        job.cancel()\n        assertTrue(job.isCancelled)\n    }\n}"
             ))),
         )))
-        delay(1000)
+        delay(333)
 
         // ── Phase 13: Advanced patterns section (25s) ──
         val advancedSection = listOf(
@@ -456,7 +456,7 @@ fun main() = runBlocking {
         )
         for (chunk in advancedSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(350)
+            delay(117)
         }
 
         // ── Phase 14: Write test file (8s) ──
@@ -467,7 +467,7 @@ fun main() = runBlocking {
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/test/kotlin/AdvancedCoroutineTest.kt")),
         )))
-        delay(2000)
+        delay(667)
 
         val testFile = """package com.example
 
@@ -530,7 +530,7 @@ class AdvancedCoroutineTest {
                 newText = testFile,
             )),
         )))
-        delay(1000)
+        delay(333)
 
         // ── Phase 15: Run tests (8s) ──
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
@@ -539,7 +539,7 @@ class AdvancedCoroutineTest {
             kind = ToolKind.EXECUTE,
             status = ToolCallStatus.IN_PROGRESS,
         )))
-        delay(2500)
+        delay(833)
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
             toolCallId = ToolCallId("tc-run-2"),
             title = "Run ./gradlew test",
@@ -548,7 +548,7 @@ class AdvancedCoroutineTest {
                 "> Task :test\n\ncom.example.AdvancedCoroutineTest\n  ✓ supervisor scope isolates failures (45ms)\n  ✓ flow backpressure works correctly (1023ms)\n\ncom.example.CoroutineTest\n  ✓ concurrent fetch completes in bounded time (1015ms)\n  ✓ cancellation propagates to children (362ms)\n\n4 tests completed, 0 failed\n\nBUILD SUCCESSFUL in 8s"
             ))),
         )))
-        delay(1500)
+        delay(500)
 
         // Final usage update
         emit(Event.SessionUpdateEvent(SessionUpdate.UsageUpdate(
@@ -589,7 +589,7 @@ class AdvancedCoroutineTest {
         )
         for (chunk in summary) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(300)
+            delay(100)
         }
 
         // End turn

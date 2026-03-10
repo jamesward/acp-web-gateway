@@ -2,6 +2,7 @@
 
 package com.jamesward.acpgateway.web
 
+import com.jamesward.acpgateway.shared.CommandInfo
 import com.jamesward.acpgateway.shared.Css
 import com.jamesward.acpgateway.shared.FileAttachment
 import com.jamesward.acpgateway.shared.Id
@@ -56,6 +57,9 @@ private external fun onClick(el: JsAny, handler: () -> Unit)
 
 @JsFun("(el, handler) => { el.onchange = () => handler(); }")
 private external fun onChange(el: JsAny, handler: () -> Unit)
+
+@JsFun("(el, handler) => { el.addEventListener('input', () => handler()); }")
+private external fun onInput(el: JsAny, handler: () -> Unit)
 
 @JsFun("(el, handler) => { el.onscroll = () => handler(); }")
 private external fun onScroll(el: JsAny, handler: () -> Unit)
@@ -139,6 +143,9 @@ private external fun onPermissionClick(el: JsAny, callback: JsAny)
 
 @JsFun("(callback) => (a, b) => callback(a, b)")
 private external fun wrapTwoStringCallback(callback: (JsString, JsString) -> Unit): JsAny
+
+@JsFun("(el, callback) => { el.addEventListener('click', (e) => { const btn = e.target.closest('[data-cmd-index]'); if (btn) { callback(btn.getAttribute('data-cmd-index')); } }); }")
+private external fun onAutocompleteClick(el: JsAny, callback: JsAny)
 
 @JsFun("(el, callback) => { el.addEventListener('click', (e) => { const btn = e.target.closest('[data-file-index]'); if (btn) { callback(btn.getAttribute('data-file-index')); } }); }")
 private external fun onFileRemoveClick(el: JsAny, callback: JsAny)
@@ -382,6 +389,9 @@ private val pendingFiles = mutableListOf<FileAttachment>()
 private var formInitialized = false
 private var reconnectDelay = 1000 // ms, doubles on each failure up to 30s
 private var switchingAgent = false
+private var availableCommands = listOf<CommandInfo>()
+private var autocompleteFiltered = listOf<CommandInfo>()
+private var autocompleteSelectedIndex = -1
 
 // ---- Entry point ----
 
@@ -471,7 +481,7 @@ private fun onMessage(data: String) {
         is WsMessage.TurnComplete -> {
             stopStatusTimer()
             setInputEnabled(true)
-            scrollToBottom()
+            if (isNearBottom()) scrollToBottom()
         }
         is WsMessage.BrowserStateRequest -> {
             val state = collectBrowserState(msg.query)
@@ -485,12 +495,16 @@ private fun onMessage(data: String) {
         is WsMessage.Prompt -> {}
         is WsMessage.BrowserStateResponse -> {}
         is WsMessage.PermissionResponse -> {}
+        is WsMessage.AvailableCommands -> {
+            availableCommands = msg.commands
+        }
         is WsMessage.Cancel -> {}
         is WsMessage.Diagnose -> {}
     }
 }
 
 private fun applyHtmlUpdate(msg: WsMessage.HtmlUpdate) {
+    val wasAtBottom = isNearBottom()
     when (msg.swap) {
         Swap.Show -> {
             val el = byId(msg.target) ?: return
@@ -520,11 +534,14 @@ private fun applyHtmlUpdate(msg: WsMessage.HtmlUpdate) {
             if (taskStartTime > 0.0) updateStatusTimerText()
         }
     }
-    // Only auto-scroll and auto-collapse when new content is appended.
-    // Morph updates existing elements in-place — auto-scrolling on morph fights
-    // the user's scroll position (e.g., browsing a tall tool call list).
-    if (msg.swap == Swap.BeforeEnd) {
+    // Auto-scroll when the user was already at the bottom before the update.
+    // This keeps the user pinned to the bottom as new content streams in,
+    // but doesn't fight their scroll position if they scrolled up.
+    if (wasAtBottom && (msg.swap == Swap.BeforeEnd || msg.swap == Swap.Morph)) {
         scrollToBottom()
+    }
+    // Auto-collapse only on new appended blocks
+    if (msg.swap == Swap.BeforeEnd) {
         autoCollapseOlderBlocks(Css.MESSAGES.toJsString(), Css.COLLAPSED.toJsString())
     }
 }
@@ -536,14 +553,38 @@ private fun setupForm() {
     val input = byId(Id.PROMPT_INPUT)?.unsafeCast<HTMLTextAreaElement>() ?: return
 
     onSubmit(form) {
+        hideAutocomplete()
         if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
     }
     onKeyDown(input) { e ->
-        if (eventKey(e).toString() == "Enter" && !eventShiftKey(e).toBoolean()) {
+        val key = eventKey(e).toString()
+        if (autocompleteFiltered.isNotEmpty() && !isAutocompleteHidden()) {
+            when (key) {
+                "Tab" -> {
+                    preventDefault(e)
+                    val idx = if (autocompleteSelectedIndex >= 0) autocompleteSelectedIndex else 0
+                    if (idx < autocompleteFiltered.size) {
+                        completeCommand(autocompleteFiltered[idx].name)
+                    }
+                    return@onKeyDown
+                }
+                "Escape" -> {
+                    preventDefault(e)
+                    hideAutocomplete()
+                    return@onKeyDown
+                }
+                "ArrowDown", "ArrowUp" -> {
+                    // Don't intercept — let cursor move in textarea
+                }
+            }
+        }
+        if (key == "Enter" && !eventShiftKey(e).toBoolean()) {
             preventDefault(e)
+            hideAutocomplete()
             if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
         }
     }
+    onInput(input) { onPromptInput() }
 
     // Attach button
     val attachBtn = byId(Id.ATTACH_BTN)?.unsafeCast<HTMLButtonElement>()
@@ -594,6 +635,17 @@ private fun setupForm() {
             sendWs(WsMessage.PermissionResponse(toolCallId.toString(), optionId.toString()))
             val dialog = byId(Id.PERMISSION_DIALOG)
             if (dialog != null) addCls(dialog, Css.HIDDEN.toJsString())
+        })
+    }
+
+    // Autocomplete click delegation
+    val acEl = getEl(Id.AUTOCOMPLETE.toJsString())
+    if (acEl != null) {
+        onAutocompleteClick(acEl, wrapStringCallback { indexStr ->
+            val idx = indexStr.toString().toIntOrNull() ?: return@wrapStringCallback
+            if (idx < autocompleteFiltered.size) {
+                completeCommand(autocompleteFiltered[idx].name)
+            }
         })
     }
 
@@ -729,7 +781,7 @@ private fun updateStatusTimerText() {
     // Update the elapsed span inside the thinking block header
     val thoughtEl = byId(Id.THOUGHT_ELAPSED)
     if (thoughtEl != null) {
-        thoughtEl.unsafeCast<HTMLElement>().textContent = "\u00b7 $elapsedStr"
+        thoughtEl.unsafeCast<HTMLElement>().textContent = elapsedStr
     }
 }
 
@@ -767,12 +819,9 @@ private fun updateScrollButtonVisibility() {
 }
 
 private fun scrollToBottom() {
-    if (!isNearBottom()) {
-        updateScrollButtonVisibility()
-        return
-    }
     val messages = byId(Css.MESSAGES) ?: return
     messages.scrollTop = messages.scrollHeight.toDouble()
+    updateScrollButtonVisibility()
 }
 
 // ---- Agent selection ----
@@ -844,6 +893,67 @@ private fun changeAgent(agentId: String) {
             }
         }
     })
+}
+
+// ---- Autocomplete ----
+
+private fun onPromptInput() {
+    val input = byId(Id.PROMPT_INPUT)?.unsafeCast<HTMLTextAreaElement>() ?: return
+    val text = input.value
+    if (availableCommands.isEmpty() || text.isEmpty() || !text.startsWith("/") || text.contains('\n')) {
+        hideAutocomplete()
+        return
+    }
+    val query = text.removePrefix("/").lowercase()
+    val filtered = if (query.isEmpty()) {
+        availableCommands
+    } else {
+        availableCommands.filter { cmd ->
+            cmd.name.lowercase().contains(query)
+        }
+    }
+    if (filtered.isEmpty()) {
+        hideAutocomplete()
+        return
+    }
+    autocompleteFiltered = filtered
+    autocompleteSelectedIndex = 0
+    showAutocomplete()
+}
+
+private fun isAutocompleteHidden(): Boolean {
+    val el = byId(Id.AUTOCOMPLETE) ?: return true
+    return hasCls(el, Css.HIDDEN.toJsString()).toBoolean()
+}
+
+private fun showAutocomplete() {
+    val el = byId(Id.AUTOCOMPLETE) ?: return
+    val html = buildString {
+        for ((i, cmd) in autocompleteFiltered.withIndex()) {
+            val activeCls = if (i == autocompleteSelectedIndex) " ${Css.AUTOCOMPLETE_ACTIVE}" else ""
+            val escapedName = cmd.name.replace("&", "&amp;").replace("<", "&lt;")
+            val escapedDesc = cmd.description.replace("&", "&amp;").replace("<", "&lt;")
+            append("<div class=\"${Css.AUTOCOMPLETE_ITEM}$activeCls\" data-cmd-index=\"$i\" title=\"$escapedDesc\">")
+            append("<div class=\"${Css.AUTOCOMPLETE_NAME}\">/$escapedName</div>")
+            append("</div>")
+        }
+    }
+    setHtml(el, html.toJsString())
+    rmCls(el, Css.HIDDEN.toJsString())
+}
+
+private fun hideAutocomplete() {
+    val el = byId(Id.AUTOCOMPLETE) ?: return
+    addCls(el, Css.HIDDEN.toJsString())
+    autocompleteFiltered = emptyList()
+    autocompleteSelectedIndex = -1
+}
+
+private fun completeCommand(name: String) {
+    val input = byId(Id.PROMPT_INPUT)?.unsafeCast<HTMLTextAreaElement>() ?: return
+    input.value = "/$name "
+    hideAutocomplete()
+    input.focus()
 }
 
 // ---- Browser state (debug) ----

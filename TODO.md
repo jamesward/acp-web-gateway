@@ -9,7 +9,6 @@
   - MCP servers
   - Option to externalize the history (likely Valkey)
 - Additonal ACP
-  - slash commands
   - file references
 - Build isolation
   - Running `./gradlew compileKotlin` while the server is running causes `NoClassDefFoundError` because the `run` task's classpath points directly to `build/classes/` directories, which get overwritten by compilation

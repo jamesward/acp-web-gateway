@@ -24,6 +24,22 @@ class GatewayClientOperations : ClientSessionOperations {
 
     private val logger = LoggerFactory.getLogger(GatewayClientOperations::class.java)
 
+    /** Called when the agent sends a notification outside of a prompt flow.
+     *  Notifications that arrive before a handler is set are buffered and replayed
+     *  when [drainBufferedNotifications] is called. */
+    @Volatile
+    var onNotification: (suspend (SessionUpdate) -> Unit)? = null
+    private val notificationBuffer = java.util.concurrent.ConcurrentLinkedQueue<SessionUpdate>()
+
+    /** Replay any notifications that arrived before [onNotification] was set. */
+    suspend fun drainBufferedNotifications() {
+        val handler = onNotification ?: return
+        while (true) {
+            val n = notificationBuffer.poll() ?: break
+            handler(n)
+        }
+    }
+
     val pendingPermissions = Channel<PendingPermission>(Channel.BUFFERED)
     private val pendingDeferreds = ConcurrentHashMap<String, CompletableDeferred<RequestPermissionResponse>>()
 
@@ -87,6 +103,13 @@ class GatewayClientOperations : ClientSessionOperations {
 
     override suspend fun notify(notification: SessionUpdate, _meta: JsonElement?) {
         logger.info("Agent notification: {}", notification)
+        val handler = onNotification
+        if (handler != null) {
+            handler(notification)
+        } else {
+            // Buffer until a handler is attached (race between session creation and event forwarding)
+            notificationBuffer.offer(notification)
+        }
     }
 
     override suspend fun fsReadTextFile(

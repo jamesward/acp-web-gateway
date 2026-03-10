@@ -2,6 +2,7 @@ package com.jamesward.acpgateway.server
 
 import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.common.Event
+import com.agentclientprotocol.model.AvailableCommandInput
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.PermissionOptionKind
 import com.agentclientprotocol.model.SessionUpdate
@@ -148,9 +149,17 @@ private class UsageState {
     }
 }
 
-suspend fun WebSocketServerSession.handleChatWebSocket(session: GatewaySession, manager: AgentProcessManager, autoPromptText: String? = null, debug: Boolean = false, commandHandler: CommandHandler? = null) {
+suspend fun WebSocketServerSession.handleChatWebSocket(session: GatewaySession, manager: AgentProcessManager, autoPromptText: String? = null, debug: Boolean = false, commandHandler: CommandHandler? = null, internalCommands: List<CommandInfo> = emptyList()) {
     while (!session.ready) {
         delay(100)
+    }
+
+    // Seed internal commands on first connect (idempotent — same list every time)
+    if (session.internalCommands.isEmpty()) {
+        session.internalCommands = buildList {
+            if (debug) add(CommandInfo("simulate", "Run a simulated agent response for UI testing"))
+            addAll(internalCommands)
+        }
     }
 
     session.connections.add(this)
@@ -160,6 +169,11 @@ suspend fun WebSocketServerSession.handleChatWebSocket(session: GatewaySession, 
         val isWorking = promptStartTime > 0L
 
         sendWsMessage(WsMessage.Connected(manager.agentName, manager.agentVersion, session.cwd, agentWorking = isWorking))
+
+        // Send available commands (internal + agent-provided)
+        if (session.allCommands.isNotEmpty()) {
+            sendWsMessage(WsMessage.AvailableCommands(session.allCommands))
+        }
 
         // Replay history as HTML fragments
         for (entry in session.store.getHistory(session.id)) {
@@ -461,6 +475,17 @@ private suspend fun handlePrompt(
                                     html = thoughtRenderedHtml(rendered, thoughtId, usageStr),
                                 ))
                             }
+                        }
+                        is SessionUpdate.AvailableCommandsUpdate -> {
+                            val commands = update.availableCommands.map { cmd ->
+                                CommandInfo(
+                                    name = cmd.name,
+                                    description = cmd.description,
+                                    inputHint = (cmd.input as? AvailableCommandInput.Unstructured)?.hint,
+                                )
+                            }
+                            session.availableCommands = commands
+                            session.broadcast(WsMessage.AvailableCommands(session.allCommands))
                         }
                         else -> logger.debug("Unhandled session update: {}", update)
                     }
