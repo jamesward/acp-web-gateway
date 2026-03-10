@@ -4,8 +4,6 @@
   - gateway CLI
     - should it only support remote proxy and be Kotlin Native?
     - users could spin up a docker container to run the gateway
-- UI
-  - Switch agents via the web UI
 - Additional functionality
   - Skills Directory with SkillsJars
   - MCP servers
@@ -13,14 +11,10 @@
 - Additonal ACP
   - slash commands
   - file references
+- Build isolation
+  - Running `./gradlew compileKotlin` while the server is running causes `NoClassDefFoundError` because the `run` task's classpath points directly to `build/classes/` directories, which get overwritten by compilation
+  - Option A: Use `./gradlew :server:runShadow` (already available via Ktor plugin, zero changes, but slower startup due to fat jar build)
+  - Option B: Add a custom `runJar` task that depends on the `jar` task and runs from the built jar + dependency jars instead of loose class files (fast, isolated from recompilation)
 - Autopilot
   - /autopilot prompt
-  - todo: what does it do?
-- Code
-  - Reduce nullability
-  - Reduce mutable state, ideally only in tests
-  - Provide better type safety for the UI
-  - Make invalid states unrepresentable
-- Meta
   - Have the agent use it's own UI to improve itself, finding more improvements along the way
-

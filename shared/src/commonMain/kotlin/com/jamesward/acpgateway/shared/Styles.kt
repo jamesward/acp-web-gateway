@@ -6,6 +6,7 @@ import kotlinx.css.properties.*
 // Element ID constants — used by both server HTML templates and browser client
 object Id {
     const val AGENT_INFO = "agent-info"
+    const val HEADER_CWD = "header-cwd"
     const val PROMPT_FORM = "prompt-form"
     const val PROMPT_INPUT = "prompt-input"
     const val SEND_BTN = "send-btn"
@@ -15,11 +16,15 @@ object Id {
     const val DIAGNOSE_BTN = "diagnose-btn"
     const val RELOAD_BTN = "reload-btn"
     const val SCROLL_BTN = "scroll-to-bottom-btn"
+    const val AGENT_MODAL = "agent-modal"
+    const val AGENT_SWAP_BTN = "agent-swap-btn"
+    const val AGENT_LOADING = "agent-loading"
     const val PERMISSION_DIALOG = "permission-dialog"
     const val PERMISSION_CONTENT = "permission-content"
     const val SCREENSHOT_TOGGLE = "screenshot-toggle"
     const val TASK_STATUS_WRAP = "task-status-wrap"
     const val TASK_STATUS = "task-status"
+    const val THOUGHT_ELAPSED = "thought-elapsed"
 }
 
 // CSS class name constants — used by both server HTML templates and shared fragment builders
@@ -29,6 +34,8 @@ object Css {
     const val HEADER = "header-bar"
     const val HEADER_TITLE = "header-title"
     const val HEADER_INFO = "agent-info"
+    const val HEADER_SEP = "header-sep"
+    const val HEADER_CWD = "header-cwd"
     const val MESSAGES = "messages"
     const val INPUT_BAR = "input-bar"
     const val INPUT_FORM = "input-form"
@@ -76,6 +83,23 @@ object Css {
     const val PERM_BTN_ALLOW = "perm-btn-allow"
     const val PERM_BTN_DENY = "perm-btn-deny"
 
+    // Agent selector
+    const val AGENT_SELECTOR = "agent-selector"
+    const val AGENT_NAME_TEXT = "agent-name-text"
+    const val AGENT_SWAP_BTN_CLS = "agent-swap-btn"
+    const val AGENT_ICON_SM = "agent-icon-sm"
+    const val AGENT_MODAL_OVERLAY = "agent-modal-overlay"
+    const val AGENT_MODAL_CARD = "agent-modal-card"
+    const val AGENT_MODAL_TITLE = "agent-modal-title"
+    const val AGENT_TABLE = "agent-table"
+    const val AGENT_ROW = "agent-row"
+    const val AGENT_ROW_ICON = "agent-row-icon"
+    const val AGENT_ROW_INFO = "agent-row-info"
+    const val AGENT_ROW_NAME = "agent-row-name"
+    const val AGENT_ROW_DESC = "agent-row-desc"
+    const val AGENT_ROW_BTN = "agent-row-btn"
+    const val AGENT_LOADING = "agent-loading"
+
     // Form elements
     const val ATTACH_BTN = "attach-btn"
     const val PROMPT_INPUT = "prompt-input"
@@ -104,6 +128,7 @@ object Css {
     const val CONTENT_LABEL = "content-label"
     const val CONTENT_BODY = "content-body"
     const val CONTENT_META = "content-meta"
+    const val THOUGHT_ELAPSED = "thought-elapsed"
 
     // Utility
     const val HIDDEN = "hidden"
@@ -196,6 +221,152 @@ fun appStylesheet(): String = CssBuilder().apply {
     ".${Css.HEADER_INFO}" {
         fontSize = 14.px
         color = Colors.gray400
+        display = Display.none
+    }
+    ".${Css.HEADER_SEP}" {
+        width = 1.px
+        height = 20.px
+        backgroundColor = Colors.gray600
+        flexShrink = 0.0
+    }
+    ".${Css.HEADER_CWD}" {
+        fontSize = 14.px
+        fontWeight = FontWeight.w600
+        color = Colors.gray300
+        overflow = Overflow.hidden
+        whiteSpace = WhiteSpace.nowrap
+        put("text-overflow", "ellipsis")
+    }
+
+    // ---- Agent selector (header) ----
+    ".${Css.AGENT_SELECTOR}" {
+        display = Display.flex
+        alignItems = Align.center
+        gap = 8.px
+    }
+    ".${Css.AGENT_ICON_SM}" {
+        width = 20.px
+        height = 20.px
+        borderRadius = 4.px
+        flexShrink = 0.0
+        backgroundColor = Colors.gray300
+        padding = Padding(2.px)
+        put("object-fit", "contain")
+    }
+    ".${Css.AGENT_NAME_TEXT}" {
+        fontSize = 14.px
+        color = Colors.gray300
+    }
+    ".${Css.AGENT_SWAP_BTN_CLS}" {
+        display = Display.flex
+        alignItems = Align.center
+        justifyContent = JustifyContent.center
+        gap = 6.px
+        backgroundColor = Colors.gray700
+        color = Colors.gray300
+        border = Border(1.px, BorderStyle.solid, Colors.gray600)
+        borderRadius = 6.px
+        height = 28.px
+        cursor = Cursor.pointer
+        padding = Padding(4.px, 8.px)
+        fontSize = 12.px
+    }
+    ".${Css.AGENT_SWAP_BTN_CLS}:hover" {
+        backgroundColor = Colors.gray600
+        color = Colors.gray100
+    }
+
+    // ---- Agent modal (initial selection) ----
+    ".${Css.AGENT_MODAL_OVERLAY}" {
+        position = Position.fixed
+        top = 0.px
+        left = 0.px
+        right = 0.px
+        bottom = 0.px
+        backgroundColor = Color("rgba(0, 0, 0, 0.6)")
+        display = Display.flex
+        alignItems = Align.center
+        justifyContent = JustifyContent.center
+        put("z-index", "60")
+    }
+    ".${Css.AGENT_MODAL_CARD}" {
+        backgroundColor = Colors.gray800
+        borderRadius = 16.px
+        padding = Padding(32.px)
+        maxWidth = 640.px
+        width = 100.pct
+        margin = Margin(0.px, 16.px)
+        border = Border(1.px, BorderStyle.solid, Colors.gray600)
+        maxHeight = 80.vh
+        display = Display.flex
+        flexDirection = FlexDirection.column
+    }
+    ".${Css.AGENT_MODAL_TITLE}" {
+        fontSize = 24.px
+        fontWeight = FontWeight.w600
+        marginBottom = 20.px
+        color = Colors.gray100
+    }
+    ".${Css.AGENT_TABLE}" {
+        display = Display.flex
+        flexDirection = FlexDirection.column
+        gap = 2.px
+        overflowY = Overflow.auto
+    }
+    ".${Css.AGENT_ROW}" {
+        display = Display.flex
+        alignItems = Align.center
+        gap = 12.px
+        padding = Padding(12.px)
+        borderRadius = 10.px
+        backgroundColor = Colors.gray900
+        border = Border(1.px, BorderStyle.solid, Colors.transparent)
+        cursor = Cursor.pointer
+        put("transition", "border-color 0.15s ease, background-color 0.15s ease")
+    }
+    ".${Css.AGENT_ROW}:hover" {
+        border = Border(1.px, BorderStyle.solid, Colors.gray600)
+        backgroundColor = Colors.gray800
+    }
+    ".${Css.AGENT_ROW_ICON}" {
+        width = 40.px
+        height = 40.px
+        borderRadius = 8.px
+        flexShrink = 0.0
+        backgroundColor = Colors.gray300
+        padding = Padding(4.px)
+        put("object-fit", "contain")
+    }
+    ".${Css.AGENT_ROW_INFO}" {
+        flex = Flex(1, 1, 0.px)
+        minWidth = 0.px
+    }
+    ".${Css.AGENT_ROW_NAME}" {
+        fontWeight = FontWeight.w500
+        color = Colors.gray100
+        fontSize = 15.px
+    }
+    ".${Css.AGENT_ROW_DESC}" {
+        color = Colors.gray400
+        fontSize = 13.px
+        marginTop = 2.px
+        overflow = Overflow.hidden
+        whiteSpace = WhiteSpace.nowrap
+        put("text-overflow", "ellipsis")
+    }
+    ".${Css.AGENT_LOADING}" {
+        position = Position.fixed
+        top = 0.px
+        left = 0.px
+        right = 0.px
+        bottom = 0.px
+        backgroundColor = Color("rgba(0, 0, 0, 0.5)")
+        display = Display.flex
+        alignItems = Align.center
+        justifyContent = JustifyContent.center
+        put("z-index", "70")
+        color = Colors.gray100
+        fontSize = 18.px
     }
 
     // ---- Messages area ----
@@ -475,6 +646,12 @@ fun appStylesheet(): String = CssBuilder().apply {
         color = Colors.gray500
         fontSize = 12.px
         marginLeft = 8.px
+    }
+    ".${Css.THOUGHT_ELAPSED}" {
+        color = Colors.gray500
+        fontSize = 12.px
+        marginLeft = 8.px
+        fontStyle = FontStyle.normal
     }
     "details[open] > .${Css.CONTENT_HEADER} .${Css.TOOL_CHEVRON}" {
         put("transform", "rotate(90deg)")

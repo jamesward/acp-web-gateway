@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-data class ToolCallInfo(val title: String, val status: String, val startTime: Long)
+data class ToolCallInfo(val title: String, val status: ToolStatus, val startTime: Long)
 
 private val broadcastJson = Json { ignoreUnknownKeys = true }
 
@@ -80,7 +80,7 @@ class GatewaySession(
                         PermissionOptionInfo(
                             optionId = opt.optionId.value,
                             name = opt.name,
-                            kind = opt.kind.name.lowercase(),
+                            kind = opt.kind.toGatewayKind(),
                         )
                     },
                 )

@@ -6,6 +6,7 @@ import io.ktor.server.application.*
 import io.ktor.server.html.*
 import io.ktor.server.http.content.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import com.jamesward.acpgateway.shared.WsMessage
 import com.jamesward.acpgateway.shared.appStylesheet
@@ -15,8 +16,11 @@ import io.ktor.server.engine.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
-import java.io.File
 import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
 
@@ -30,9 +34,62 @@ private val logger = LoggerFactory.getLogger("Server")
  */
 typealias CommandHandler = suspend (prompt: WsMessage.Prompt, session: GatewaySession) -> WsMessage.Prompt?
 
+/**
+ * Holds the current agent process and supports switching agents at runtime.
+ */
+class AgentHolder(
+    val registry: List<RegistryAgent>,
+    private val workingDir: String,
+    private val mode: GatewayMode,
+) {
+    private val lock = Mutex()
+
+    @Volatile
+    var manager: AgentProcessManager? = null
+        internal set
+
+    @Volatile
+    var currentAgent: RegistryAgent? = null
+        internal set
+
+    val currentAgentId: String? get() = currentAgent?.id
+    val currentAgentName: String? get() = currentAgent?.name
+
+    suspend fun switchAgent(agentId: String) {
+        lock.withLock {
+            val oldManager = manager
+            val agent = registry.find { it.id == agentId }
+                ?: error("Agent '$agentId' not found in registry. Available: ${registry.map { it.id }}")
+
+            logger.info("Switching to agent: {} ({})", agent.name, agent.version)
+            val command = resolveAgentCommand(agent)
+            val mgr = AgentProcessManager(command, workingDir)
+            mgr.start()
+            if (mode == GatewayMode.LOCAL) {
+                mgr.createSession()
+            }
+
+            manager = mgr
+            currentAgent = agent
+
+            // Close old manager after swapping (so WS connections fail and clients reconnect)
+            oldManager?.close()
+            logger.info("Agent switched to: {} ({})", agent.name, agent.version)
+        }
+    }
+
+    fun close() {
+        manager?.close()
+    }
+}
+
+@Serializable
+data class ChangeAgentRequest(val agentId: String)
+
+private val apiJson = Json { ignoreUnknownKeys = true }
+
 fun Application.module(
-    manager: AgentProcessManager,
-    agentName: String,
+    holder: AgentHolder,
     mode: GatewayMode,
     debug: Boolean = false,
     dev: Boolean = false,
@@ -52,17 +109,24 @@ fun Application.module(
         when (mode) {
             GatewayMode.LOCAL -> {
                 get("/") {
-                    val session = manager.sessions.values.firstOrNull()
-                    if (session != null) {
-                        call.respondHtml(HttpStatusCode.OK) {
-                            chatPage(agentName, debug = debug, dev = dev)
-                        }
-                    } else {
-                        call.respondText("No session available", status = HttpStatusCode.ServiceUnavailable)
+                    val agentName = holder.currentAgentName ?: "ACP Gateway"
+                    call.respondHtml(HttpStatusCode.OK) {
+                        chatPage(
+                            agentName = agentName,
+                            debug = debug,
+                            dev = dev,
+                            agents = holder.registry,
+                            currentAgentId = holder.currentAgentId,
+                        )
                     }
                 }
 
                 webSocket("/ws") {
+                    val manager = holder.manager
+                    if (manager == null) {
+                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No agent selected"))
+                        return@webSocket
+                    }
                     val session = manager.sessions.values.firstOrNull()
                     if (session == null) {
                         close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No session available"))
@@ -74,25 +138,39 @@ fun Application.module(
 
             GatewayMode.PROXY -> {
                 get("/") {
+                    val agentName = holder.currentAgentName ?: "ACP Gateway"
                     call.respondHtml(HttpStatusCode.OK) {
                         landingPage(agentName)
                     }
                 }
 
                 get("/s/{sessionId}") {
+                    val manager = holder.manager
                     val sessionId = call.parameters["sessionId"]?.let {
                         try { UUID.fromString(it) } catch (_: Exception) { null }
                     }
-                    if (sessionId == null || manager.getSession(sessionId) == null) {
+                    if (manager == null || sessionId == null || manager.getSession(sessionId) == null) {
                         call.respondText("Session not found", status = HttpStatusCode.NotFound)
                         return@get
                     }
+                    val agentName = holder.currentAgentName ?: "ACP Gateway"
                     call.respondHtml(HttpStatusCode.OK) {
-                        chatPage(agentName, sessionId, debug, dev)
+                        chatPage(
+                            agentName = agentName,
+                            sessionId = sessionId,
+                            debug = debug,
+                            dev = dev,
+                            agents = holder.registry,
+                            currentAgentId = holder.currentAgentId,
+                        )
                     }
                 }
 
                 webSocket("/s/{sessionId}/ws") {
+                    val manager = holder.manager ?: run {
+                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No agent selected"))
+                        return@webSocket
+                    }
                     val sessionId = call.parameters["sessionId"]?.let {
                         try { UUID.fromString(it) } catch (_: Exception) { null }
                     }
@@ -103,6 +181,18 @@ fun Application.module(
                     }
                     handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler)
                 }
+            }
+        }
+
+        post("/api/change-agent") {
+            try {
+                val body = call.receiveText()
+                val request = apiJson.decodeFromString(ChangeAgentRequest.serializer(), body)
+                holder.switchAgent(request.agentId)
+                call.respondText("ok", ContentType.Text.Plain)
+            } catch (e: Exception) {
+                logger.error("Failed to change agent", e)
+                call.respondText(e.message ?: "Unknown error", ContentType.Text.Plain, HttpStatusCode.InternalServerError)
             }
         }
 
@@ -132,7 +222,7 @@ fun Application.module(
 }
 
 data class ServerConfig(
-    val agentId: String,
+    val agentId: String?,
     val mode: GatewayMode,
     val port: Int,
     val debug: Boolean,
@@ -153,23 +243,16 @@ fun parseServerConfig(args: Array<String>): ServerConfig = ServerConfig(
  * Blocks the calling thread until the server is shut down.
  */
 fun startServer(config: ServerConfig) {
-    logger.info("Starting ACP Web Gateway for agent: {} (mode={}, port={}, debug={}, dev={})",
-        config.agentId, config.mode, config.port, config.debug, config.dev)
+    logger.info("Starting ACP Web Gateway (agent={}, mode={}, port={}, debug={}, dev={})",
+        config.agentId ?: "<none>", config.mode, config.port, config.debug, config.dev)
 
-    val (manager, agentDisplayName) = runBlocking {
+    val holder = runBlocking {
         val registry = fetchRegistry()
-        val agent = registry.find { it.id == config.agentId }
-            ?: error("Agent '${config.agentId}' not found in registry. Available: ${registry.map { it.id }}")
-        logger.info("Found agent: {} ({})", agent.name, agent.version)
-
-        val command = resolveAgentCommand(agent)
-        val mgr = AgentProcessManager(command, System.getProperty("user.dir"))
-        mgr.start()
-        mgr to agent.name
-    }
-
-    if (config.mode == GatewayMode.LOCAL) {
-        runBlocking { manager.createSession() }
+        val h = AgentHolder(registry, System.getProperty("user.dir"), config.mode)
+        if (config.agentId != null) {
+            h.switchAgent(config.agentId)
+        }
+        h
     }
 
     lateinit var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>
@@ -178,9 +261,9 @@ fun startServer(config: ServerConfig) {
             this.port = config.port
         }
     }) {
-        module(manager, agentDisplayName, config.mode, config.debug, config.dev,
+        module(holder, config.mode, config.debug, config.dev,
             onReload = {
-                manager.close()
+                holder.close()
                 server.stop(100, 500)
                 Runtime.getRuntime().halt(0)
             },
@@ -191,14 +274,14 @@ fun startServer(config: ServerConfig) {
 
     Runtime.getRuntime().addShutdownHook(Thread({
         logger.info("Shutdown hook — closing agent and server")
-        manager.close()
+        holder.close()
         server.stop(100, 500)
     }, "shutdown-hook"))
 
     if (config.mode == GatewayMode.LOCAL) {
-        logger.info("Server started on http://localhost:{} (redirects to session)", config.port)
+        logger.info("Server started on http://localhost:{}", config.port)
     } else {
-        logger.info("Server started on http://localhost:{} (proxy mode, create sessions via UI)", config.port)
+        logger.info("Server started on http://localhost:{} (proxy mode)", config.port)
     }
 
     Thread.currentThread().join()
@@ -208,11 +291,9 @@ fun main(args: Array<String>) {
     startServer(parseServerConfig(args))
 }
 
-private fun parseAgentId(args: Array<String>): String {
+private fun parseAgentId(args: Array<String>): String? {
     val idx = args.indexOf("--agent")
-    if (idx == -1 || idx + 1 >= args.size) {
-        error("Usage: --agent <agent-id>")
-    }
+    if (idx == -1 || idx + 1 >= args.size) return null
     return args[idx + 1]
 }
 

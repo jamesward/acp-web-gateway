@@ -54,7 +54,7 @@ private fun Application.simulationModule(
     routing {
         get("/") {
             call.respondHtml(HttpStatusCode.OK) {
-                chatPage("Simulated Agent", debug = true)
+                chatPage("Simulated Agent", debug = true, currentAgentId = "simulated")
             }
         }
 

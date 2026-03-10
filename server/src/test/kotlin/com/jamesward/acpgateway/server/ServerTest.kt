@@ -44,8 +44,11 @@ class ServerTest {
         session.ready = true
         session.startEventForwarding()
         manager.sessions[session.id] = session
+        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), mode)
+        holder.manager = manager
+        holder.currentAgent = RegistryAgent(id = "test-agent", name = "test-agent", version = "1.0.0")
         application {
-            module(manager, "test-agent", mode)
+            module(holder, mode)
         }
         block(session.id, fakeClientSession)
     }

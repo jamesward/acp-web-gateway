@@ -2,8 +2,10 @@ package com.jamesward.acpgateway.server
 
 import com.jamesward.acpgateway.shared.Css
 import com.jamesward.acpgateway.shared.FileAttachment
+import com.jamesward.acpgateway.shared.PermissionKind
 import com.jamesward.acpgateway.shared.PermissionOptionInfo
 import com.jamesward.acpgateway.shared.Swap
+import com.jamesward.acpgateway.shared.ToolStatus
 import com.jamesward.acpgateway.shared.WsMessage
 import kotlinx.serialization.json.Json
 import org.commonmark.parser.Parser
@@ -65,8 +67,8 @@ class WsMessageTest {
             toolCallId = "tc-123",
             title = "Read file /etc/passwd",
             options = listOf(
-                PermissionOptionInfo("allow", "Allow Once", "allow_once"),
-                PermissionOptionInfo("deny", "Deny", "reject_once"),
+                PermissionOptionInfo("allow", "Allow Once", PermissionKind.AllowOnce),
+                PermissionOptionInfo("deny", "Deny", PermissionKind.RejectOnce),
             ),
         )
         val encoded = json.encodeToString(WsMessage.serializer(), msg)
@@ -74,7 +76,7 @@ class WsMessageTest {
         assertIs<WsMessage.PermissionRequest>(decoded)
         assertEquals("tc-123", decoded.toolCallId)
         assertEquals(2, decoded.options.size)
-        assertEquals("allow_once", decoded.options[0].kind)
+        assertEquals(PermissionKind.AllowOnce, decoded.options[0].kind)
     }
 
     @Test
@@ -159,12 +161,12 @@ class WsMessageTest {
 
     @Test
     fun toolCallRoundTrip() {
-        val msg: WsMessage = WsMessage.ToolCall("tc-1", "Read file", "in_progress")
+        val msg: WsMessage = WsMessage.ToolCall("tc-1", "Read file", ToolStatus.InProgress)
         val encoded = json.encodeToString(WsMessage.serializer(), msg)
         val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
         assertIs<WsMessage.ToolCall>(decoded)
         assertEquals("tc-1", decoded.toolCallId)
         assertEquals("Read file", decoded.title)
-        assertEquals("in_progress", decoded.status)
+        assertEquals(ToolStatus.InProgress, decoded.status)
     }
 }

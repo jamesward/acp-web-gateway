@@ -3,6 +3,7 @@ package com.jamesward.acpgateway.server
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.model.*
 import com.agentclientprotocol.model.ContentBlock
+import com.jamesward.acpgateway.shared.Id
 import com.microsoft.playwright.Browser
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.options.FilePayload
@@ -45,8 +46,11 @@ class BrowserIntegrationTest {
             manager.agentName = "test-agent"
             manager.agentVersion = "1.0.0"
 
+            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
+            holder.manager = manager
+            holder.currentAgent = RegistryAgent(id = "test-agent", name = "test-agent", version = "1.0.0")
             server = embeddedServer(CIO, port = port) {
-                module(manager, "test-agent", GatewayMode.LOCAL, debug = true)
+                module(holder, GatewayMode.LOCAL, debug = true)
             }
             server.start(wait = false)
 
@@ -155,20 +159,28 @@ class BrowserIntegrationTest {
     @Test
     fun statusTimerVisibleWhileWorking() {
         val gate = CompletableDeferred<List<Event>>()
-        fakeSession.enqueueDelayedResponse(gate)
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text("Pondering..."))))
+                val events = gate.await()
+                for (event in events) emit(event)
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
 
         waitForConnected()
 
         page.fill("#prompt-input", "slow task")
         page.click("#send-btn")
 
+        // Wait for the thinking block's elapsed timer to appear in the header
         page.waitForFunction(
-            "() => { const el = document.getElementById('task-status-wrap'); return el && !el.classList.contains('hidden'); }",
+            "() => { const el = document.getElementById('${Id.THOUGHT_ELAPSED}'); return el && el.textContent.length > 0; }",
             null,
             Page.WaitForFunctionOptions().setTimeout(10000.0),
         )
-        val statusText = page.textContent("#task-status")
-        assertTrue(statusText.contains("Thinking"), "Status should show 'Thinking', got: $statusText")
+        val elapsedText = page.textContent("#${Id.THOUGHT_ELAPSED}")
+        assertTrue(elapsedText.contains("\u00b7"), "Elapsed should contain separator, got: $elapsedText")
 
         val btnText = page.textContent("#send-btn")
         assertEquals("Cancel", btnText)

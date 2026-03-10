@@ -31,6 +31,9 @@ private external fun addCls(el: JsAny, cls: JsString)
 @JsFun("(el, cls) => el.classList.remove(cls)")
 private external fun rmCls(el: JsAny, cls: JsString)
 
+@JsFun("(el, cls) => el.classList.contains(cls)")
+private external fun hasCls(el: JsAny, cls: JsString): JsBoolean
+
 @JsFun("(el, cls) => { el.className = cls; }")
 private external fun setCls(el: JsAny, cls: JsString)
 
@@ -232,6 +235,38 @@ private external fun pollUntilHealthy(callback: () -> Unit)
 @JsFun("() => location.reload()")
 private external fun reloadPage()
 
+// ---- Agent selection: POST with JSON body ----
+
+@JsFun("""(url, body, callback) => {
+  fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: body })
+    .then(function(r) { callback(r.ok ? 'ok' : 'error: ' + r.status); })
+    .catch(function(e) { callback('error: ' + e.message); });
+}""")
+private external fun postJsonRequest(url: JsString, body: JsString, callback: JsAny)
+
+// ---- Agent dropdown: close on outside click ----
+
+@JsFun("""(modalId, cardCls, hiddenCls) => {
+  var m = document.getElementById(modalId);
+  if (!m) return;
+  m.addEventListener('click', function(e) {
+    if (!e.target.closest('.' + cardCls)) {
+      m.classList.add(hiddenCls);
+    }
+  });
+}""")
+private external fun setupModalOutsideClick(modalId: JsString, cardCls: JsString, hiddenCls: JsString)
+
+// ---- Agent modal/dropdown: click delegation on data-agent-id ----
+
+@JsFun("""(el, callback) => {
+  el.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-agent-id]');
+    if (btn) { callback(btn.getAttribute('data-agent-id')); }
+  });
+}""")
+private external fun onAgentClick(el: JsAny, callback: JsAny)
+
 // ---- Screenshot via SVG foreignObject → Canvas → base64 PNG ----
 
 @JsFun("""(callback) => {
@@ -346,6 +381,7 @@ private var timerIntervalId: JsNumber? = null
 private val pendingFiles = mutableListOf<FileAttachment>()
 private var formInitialized = false
 private var reconnectDelay = 1000 // ms, doubles on each failure up to 30s
+private var switchingAgent = false
 
 // ---- Entry point ----
 
@@ -353,7 +389,11 @@ fun main() {
     if (document.body.hasAttribute("data-debug") == true) {
         installConsoleCapture()
     }
-    connect()
+    setupAgentSelection()
+    // Only connect WebSocket if an agent is selected
+    if (document.body.hasAttribute("data-agent-id") == true) {
+        connect()
+    }
 }
 
 // ---- WebSocket ----
@@ -373,7 +413,7 @@ private fun connect() {
     wsOnMessage(socket) { data -> onMessage(data.toString()) }
     wsOnClose(socket) {
         setWsReadyState(3.toJsNumber())
-        if (reloading) return@wsOnClose
+        if (reloading || switchingAgent) return@wsOnClose
         val el = byId(Id.AGENT_INFO)
         if (el != null) el.textContent = "Reconnecting\u2026"
         setInputEnabled(false)
@@ -401,13 +441,21 @@ private fun onMessage(data: String) {
     val msg = json.decodeFromString(WsMessage.serializer(), data)
     when (msg) {
         is WsMessage.Connected -> {
-            val info = buildString {
-                append("${msg.agentName} v${msg.agentVersion}")
-                val cwd = msg.cwd
-                if (cwd != null) append(" \u2014 ${cwd.substringAfterLast('/')}")
-            }
+            val info = "${msg.agentName} v${msg.agentVersion}"
             val el = byId(Id.AGENT_INFO) ?: return
             el.textContent = info
+
+            // Show CWD
+            val cwd = msg.cwd
+            if (cwd != null) {
+                val sepEl = byId("header-sep")
+                if (sepEl != null) rmCls(sepEl, Css.HIDDEN.toJsString())
+                val cwdEl = byId(Id.HEADER_CWD)
+                if (cwdEl != null) {
+                    cwdEl.textContent = cwd
+                    rmCls(cwdEl, Css.HIDDEN.toJsString())
+                }
+            }
             // Clear messages before server replays history
             val messages = byId(Css.MESSAGES)
             if (messages != null) setHtml(messages, "".toJsString())
@@ -468,6 +516,8 @@ private fun applyHtmlUpdate(msg: WsMessage.HtmlUpdate) {
                 val messages = byId(Css.MESSAGES) ?: return
                 insertHtml(messages, "beforeend".toJsString(), msg.html.toJsString())
             }
+            // Re-populate the elapsed timer after morph (morph resets it to empty)
+            if (taskStartTime > 0.0) updateStatusTimerText()
         }
     }
     // Only auto-scroll and auto-collapse when new content is appended.
@@ -674,16 +724,18 @@ private fun formatElapsed(ms: Double): String {
 }
 
 private fun updateStatusTimerText() {
-    val el = byId(Id.TASK_STATUS) ?: return
     val elapsed = dateNow().toDouble() - taskStartTime
-    el.unsafeCast<HTMLElement>().textContent = "Thinking \u00b7 ${formatElapsed(elapsed)}"
+    val elapsedStr = formatElapsed(elapsed)
+    // Update the elapsed span inside the thinking block header
+    val thoughtEl = byId(Id.THOUGHT_ELAPSED)
+    if (thoughtEl != null) {
+        thoughtEl.unsafeCast<HTMLElement>().textContent = "\u00b7 $elapsedStr"
+    }
 }
 
 private fun startStatusTimer() {
     stopStatusTimer()
     taskStartTime = dateNow().toDouble()
-    val wrap = byId(Id.TASK_STATUS_WRAP) ?: return
-    rmCls(wrap, Css.HIDDEN.toJsString())
     updateStatusTimerText()
     timerIntervalId = jsSetInterval(::updateStatusTimerText, 1000.toJsNumber())
 }
@@ -695,8 +747,11 @@ private fun stopStatusTimer() {
         jsClearInterval(id)
         timerIntervalId = null
     }
-    val wrap = byId(Id.TASK_STATUS_WRAP) ?: return
-    addCls(wrap, Css.HIDDEN.toJsString())
+    // Clear the elapsed text in the thinking block header
+    val thoughtEl = byId(Id.THOUGHT_ELAPSED)
+    if (thoughtEl != null) {
+        thoughtEl.unsafeCast<HTMLElement>().textContent = ""
+    }
 }
 
 // ---- Scroll management ----
@@ -718,6 +773,77 @@ private fun scrollToBottom() {
     }
     val messages = byId(Css.MESSAGES) ?: return
     messages.scrollTop = messages.scrollHeight.toDouble()
+}
+
+// ---- Agent selection ----
+
+private fun setupAgentSelection() {
+    // Agent modal: click on agent rows
+    val modal = getEl(Id.AGENT_MODAL.toJsString())
+    if (modal != null) {
+        onAgentClick(modal, wrapStringCallback { agentId ->
+            changeAgent(agentId.toString())
+        })
+    }
+
+    // Swap button: toggle modal visibility
+    val swapBtn = getEl(Id.AGENT_SWAP_BTN.toJsString())
+    if (swapBtn != null) {
+        onClick(swapBtn) {
+            val m = byId(Id.AGENT_MODAL) ?: return@onClick
+            if (hasCls(m, Css.HIDDEN.toJsString()).toBoolean()) {
+                rmCls(m, Css.HIDDEN.toJsString())
+            } else {
+                addCls(m, Css.HIDDEN.toJsString())
+            }
+        }
+    }
+
+    // Close modal when clicking the overlay background
+    if (modal != null) {
+        setupModalOutsideClick(
+            Id.AGENT_MODAL.toJsString(),
+            Css.AGENT_MODAL_CARD.toJsString(),
+            Css.HIDDEN.toJsString(),
+        )
+    }
+}
+
+private fun changeAgent(agentId: String) {
+    // Don't switch to the already-selected agent
+    if (document.body.getAttribute("data-agent-id") == agentId) return
+
+    switchingAgent = true
+
+    // Show loading overlay
+    val loading = byId(Id.AGENT_LOADING)
+    if (loading != null) rmCls(loading, Css.HIDDEN.toJsString())
+
+    // Hide modal if visible
+    val modal = byId(Id.AGENT_MODAL)
+    if (modal != null) addCls(modal, Css.HIDDEN.toJsString())
+
+    // Close existing WebSocket
+    ws?.close()
+    ws = null
+
+    // POST to server to switch agent
+    val body = """{"agentId":"$agentId"}"""
+    postJsonRequest("/api/change-agent".toJsString(), body.toJsString(), wrapStringCallback { result ->
+        if (result.toString().startsWith("ok")) {
+            // Reload page to get fresh state with new agent
+            reloadPage()
+        } else {
+            // Error - hide loading, show modal again
+            switchingAgent = false
+            val loadingEl = byId(Id.AGENT_LOADING)
+            if (loadingEl != null) addCls(loadingEl, Css.HIDDEN.toJsString())
+            val modalEl = byId(Id.AGENT_MODAL)
+            if (modalEl != null && document.body.hasAttribute("data-agent-id") != true) {
+                rmCls(modalEl, Css.HIDDEN.toJsString())
+            }
+        }
+    })
 }
 
 // ---- Browser state (debug) ----

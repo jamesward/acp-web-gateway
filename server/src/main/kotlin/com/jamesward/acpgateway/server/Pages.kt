@@ -5,7 +5,14 @@ import com.jamesward.acpgateway.shared.Id
 import kotlinx.html.*
 import java.util.UUID
 
-fun HTML.chatPage(agentName: String, sessionId: UUID? = null, debug: Boolean = false, dev: Boolean = false) {
+fun HTML.chatPage(
+    agentName: String,
+    sessionId: UUID? = null,
+    debug: Boolean = false,
+    dev: Boolean = false,
+    agents: List<RegistryAgent> = emptyList(),
+    currentAgentId: String? = null,
+) {
     head {
         meta { charset = "utf-8" }
         meta { name = "viewport"; content = "width=device-width, initial-scale=1" }
@@ -19,9 +26,44 @@ fun HTML.chatPage(agentName: String, sessionId: UUID? = null, debug: Boolean = f
         if (debug) {
             attributes["data-debug"] = "true"
         }
+        if (currentAgentId != null) {
+            attributes["data-agent-id"] = currentAgentId
+        }
         div(classes = Css.HEADER) {
-            div(classes = Css.HEADER_TITLE) { +"ACP Gateway" }
-            div(classes = Css.HEADER_INFO) { id = Id.AGENT_INFO; +"Connecting..." }
+            // Agent icon + name + swap button
+            if (agents.isNotEmpty() && currentAgentId != null) {
+                val current = agents.find { it.id == currentAgentId }
+                if (current?.icon != null) {
+                    img(classes = Css.AGENT_ICON_SM) {
+                        src = current.icon
+                        alt = current.name
+                    }
+                }
+                span(classes = Css.AGENT_NAME_TEXT) {
+                    id = Id.AGENT_INFO
+                    +(current?.name ?: currentAgentId)
+                }
+                button(classes = Css.AGENT_SWAP_BTN_CLS) {
+                    id = Id.AGENT_SWAP_BTN
+                    type = ButtonType.button
+                    title = "Switch agent"
+                    +"⇄"
+                }
+            } else if (currentAgentId != null) {
+                span(classes = Css.AGENT_NAME_TEXT) {
+                    id = Id.AGENT_INFO
+                    +currentAgentId
+                }
+            } else {
+                span(classes = Css.AGENT_NAME_TEXT) {
+                    id = Id.AGENT_INFO
+                }
+            }
+
+            // Separator + CWD
+            div(classes = "${Css.HEADER_SEP} ${Css.HIDDEN}") { id = "header-sep" }
+            div(classes = "${Css.HEADER_CWD} ${Css.HIDDEN}") { id = Id.HEADER_CWD }
+
             if (dev) {
                 button(classes = Css.RELOAD_BTN) {
                     id = Id.RELOAD_BTN
@@ -104,6 +146,47 @@ fun HTML.chatPage(agentName: String, sessionId: UUID? = null, debug: Boolean = f
                 id = Id.PERMISSION_CONTENT
             }
         }
+
+        // Agent selector modal (visible when no agent selected, hidden otherwise)
+        if (agents.isNotEmpty()) {
+            val modalClasses = if (currentAgentId != null) {
+                "${Css.AGENT_MODAL_OVERLAY} ${Css.HIDDEN}"
+            } else {
+                Css.AGENT_MODAL_OVERLAY
+            }
+            div(classes = modalClasses) {
+                id = Id.AGENT_MODAL
+                div(classes = Css.AGENT_MODAL_CARD) {
+                    h2(classes = Css.AGENT_MODAL_TITLE) { +"Select an Agent" }
+                    div(classes = Css.AGENT_TABLE) {
+                        for (agent in agents) {
+                            div(classes = Css.AGENT_ROW) {
+                                attributes["data-agent-id"] = agent.id
+                                if (agent.icon != null) {
+                                    img(classes = Css.AGENT_ROW_ICON) {
+                                        src = agent.icon
+                                        alt = agent.name
+                                    }
+                                }
+                                div(classes = Css.AGENT_ROW_INFO) {
+                                    div(classes = Css.AGENT_ROW_NAME) { +agent.name }
+                                    if (agent.description.isNotEmpty()) {
+                                        div(classes = Css.AGENT_ROW_DESC) { +agent.description }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Agent loading overlay (hidden by default)
+        div(classes = "${Css.AGENT_LOADING} ${Css.HIDDEN}") {
+            id = Id.AGENT_LOADING
+            +"Starting agent\u2026"
+        }
+
         // idiomorph — lightweight DOM morph library (~3KB)
         script {
             unsafe {

@@ -122,6 +122,20 @@ class FragmentsTest {
         assertTrue(html.contains("""id="thought-1""""))
     }
 
+    @Test
+    fun thoughtMessageHasElapsedSpan() {
+        val html = thoughtMessageHtml("thinking...")
+        assertTrue(html.contains("""id="${Id.THOUGHT_ELAPSED}""""))
+        assertTrue(html.contains(Css.THOUGHT_ELAPSED))
+    }
+
+    @Test
+    fun thoughtRenderedHasElapsedSpan() {
+        val html = thoughtRenderedHtml("<p>thinking</p>")
+        assertTrue(html.contains("""id="${Id.THOUGHT_ELAPSED}""""))
+        assertTrue(html.contains(Css.THOUGHT_ELAPSED))
+    }
+
     // ---- errorMessageHtml ----
 
     @Test
@@ -158,14 +172,14 @@ class FragmentsTest {
 
     @Test
     fun toolBlockSetsIdWhenProvided() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "completed"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed))
         val html = toolBlockHtml(entries, blockId = "tools-1")
         assertTrue(html.contains("""id="tools-1""""))
     }
 
     @Test
     fun toolBlockHasCorrectWrapperClass() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "completed"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains("""class="${Css.MSG_WRAP_ASSISTANT}""""))
         assertTrue(html.contains("""class="${Css.TOOL_BLOCK}""""))
@@ -173,7 +187,7 @@ class FragmentsTest {
 
     @Test
     fun toolBlockShowsSummaryForSingleCompletedTool() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "completed"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains("1 tool call"))
         assertTrue(html.contains("1 done"))
@@ -183,9 +197,9 @@ class FragmentsTest {
     @Test
     fun toolBlockShowsSummaryForMultipleTools() {
         val entries = listOf(
-            ToolCallDisplay("tc-1", "Read file", "completed"),
-            ToolCallDisplay("tc-2", "Write file", "in_progress"),
-            ToolCallDisplay("tc-3", "Delete file", "failed"),
+            ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed),
+            ToolCallDisplay("tc-2", "Write file", ToolStatus.InProgress),
+            ToolCallDisplay("tc-3", "Delete file", ToolStatus.Failed),
         )
         val html = toolBlockHtml(entries)
         assertTrue(html.contains("3 tool calls"))
@@ -197,8 +211,8 @@ class FragmentsTest {
     @Test
     fun toolBlockShowsActiveToolName() {
         val entries = listOf(
-            ToolCallDisplay("tc-1", "Read file", "completed"),
-            ToolCallDisplay("tc-2", "Write file", "in_progress"),
+            ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed),
+            ToolCallDisplay("tc-2", "Write file", ToolStatus.InProgress),
         )
         val html = toolBlockHtml(entries)
         assertTrue(html.contains("Write file"))
@@ -209,8 +223,8 @@ class FragmentsTest {
     @Test
     fun toolBlockDoesNotShowActiveToolWhenAllDone() {
         val entries = listOf(
-            ToolCallDisplay("tc-1", "Read file", "completed"),
-            ToolCallDisplay("tc-2", "Write file", "completed"),
+            ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed),
+            ToolCallDisplay("tc-2", "Write file", ToolStatus.Completed),
         )
         val html = toolBlockHtml(entries)
         assertFalse(html.contains(Css.TOOL_ACTIVE))
@@ -219,7 +233,7 @@ class FragmentsTest {
 
     @Test
     fun toolBlockCompletedEntryHasCheckIcon() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "completed"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains(Css.TOOL_ICON_DONE))
         assertTrue(html.contains("\u2713")) // checkmark
@@ -227,7 +241,7 @@ class FragmentsTest {
 
     @Test
     fun toolBlockFailedEntryHasCrossIcon() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "failed"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Failed))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains(Css.TOOL_ICON_FAIL))
         assertTrue(html.contains("\u2717")) // cross mark
@@ -235,7 +249,7 @@ class FragmentsTest {
 
     @Test
     fun toolBlockRunningEntryHasCircleIcon() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "in_progress"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.InProgress))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains(Css.TOOL_ICON_RUNNING))
         assertTrue(html.contains("\u25CB")) // circle
@@ -243,7 +257,7 @@ class FragmentsTest {
 
     @Test
     fun toolBlockEntryWithContentHasNestedDetails() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "completed", content = "file contents here"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed, content = "file contents here"))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains(Css.TOOL_ROW_CLICKABLE))
         assertTrue(html.contains(Css.TOOL_RESULT))
@@ -253,7 +267,7 @@ class FragmentsTest {
 
     @Test
     fun toolBlockEntryWithoutContentHasNoNestedDetails() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "completed"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed))
         val html = toolBlockHtml(entries)
         assertFalse(html.contains(Css.TOOL_ROW_CLICKABLE))
         assertFalse(html.contains(Css.TOOL_RESULT))
@@ -261,14 +275,14 @@ class FragmentsTest {
 
     @Test
     fun toolBlockEntryHasIdAttribute() {
-        val entries = listOf(ToolCallDisplay("tc-abc", "Read file", "completed"))
+        val entries = listOf(ToolCallDisplay("tc-abc", "Read file", ToolStatus.Completed))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains("""id="tc-tc-abc""""))
     }
 
     @Test
     fun toolBlockHasDetailsAndSummaryElements() {
-        val entries = listOf(ToolCallDisplay("tc-1", "Read file", "completed"))
+        val entries = listOf(ToolCallDisplay("tc-1", "Read file", ToolStatus.Completed))
         val html = toolBlockHtml(entries)
         assertTrue(html.contains("<details>"))
         assertTrue(html.contains("<summary"))
@@ -278,7 +292,7 @@ class FragmentsTest {
     @Test
     fun toolBlockWithManyEntriesRendersAllRows() {
         val entries = (1..45).map { i ->
-            ToolCallDisplay("tc-$i", "Tool $i", "completed", content = "result $i")
+            ToolCallDisplay("tc-$i", "Tool $i", ToolStatus.Completed, content = "result $i")
         }
         val html = toolBlockHtml(entries, blockId = "tools-test")
         // Summary should show 45
@@ -297,7 +311,7 @@ class FragmentsTest {
 
     @Test
     fun toolBlockWithManyEntriesHasUniqueRowIds() {
-        val entries = (1..10).map { ToolCallDisplay("id-$it", "Tool $it", "completed") }
+        val entries = (1..10).map { ToolCallDisplay("id-$it", "Tool $it", ToolStatus.Completed) }
         val html = toolBlockHtml(entries)
         val ids = Regex("""id="tc-id-(\d+)"""").findAll(html).map { it.groupValues[1].toInt() }.toList()
         assertEquals((1..10).toList(), ids, "Tool row IDs should appear in order")
@@ -311,8 +325,8 @@ class FragmentsTest {
             toolCallId = "tc-1",
             title = "Read /etc/passwd",
             options = listOf(
-                PermissionOptionInfo(optionId = "allow_once", name = "Allow Once", kind = "allow_once"),
-                PermissionOptionInfo(optionId = "reject_once", name = "Deny Once", kind = "reject_once"),
+                PermissionOptionInfo(optionId = "allow_once", name = "Allow Once", kind = PermissionKind.AllowOnce),
+                PermissionOptionInfo(optionId = "reject_once", name = "Deny Once", kind = PermissionKind.RejectOnce),
             ),
         )
         assertTrue(html.contains(Css.PERM_HEADING))
@@ -327,8 +341,8 @@ class FragmentsTest {
             toolCallId = "tc-42",
             title = "Write file",
             options = listOf(
-                PermissionOptionInfo(optionId = "opt-allow", name = "Allow", kind = "allow_once"),
-                PermissionOptionInfo(optionId = "opt-deny", name = "Deny", kind = "reject_once"),
+                PermissionOptionInfo(optionId = "opt-allow", name = "Allow", kind = PermissionKind.AllowOnce),
+                PermissionOptionInfo(optionId = "opt-deny", name = "Deny", kind = PermissionKind.RejectOnce),
             ),
         )
         assertTrue(html.contains("""data-tool-call-id="tc-42""""))
@@ -341,7 +355,7 @@ class FragmentsTest {
         val html = permissionContentHtml(
             toolCallId = "tc-1",
             title = "test",
-            options = listOf(PermissionOptionInfo(optionId = "opt-1", name = "Allow", kind = "allow_once")),
+            options = listOf(PermissionOptionInfo(optionId = "opt-1", name = "Allow", kind = PermissionKind.AllowOnce)),
         )
         assertTrue(html.contains(Css.PERM_BTN_ALLOW))
     }
@@ -351,7 +365,7 @@ class FragmentsTest {
         val html = permissionContentHtml(
             toolCallId = "tc-1",
             title = "test",
-            options = listOf(PermissionOptionInfo(optionId = "opt-1", name = "Deny", kind = "reject_once")),
+            options = listOf(PermissionOptionInfo(optionId = "opt-1", name = "Deny", kind = PermissionKind.RejectOnce)),
         )
         assertTrue(html.contains(Css.PERM_BTN_DENY))
     }

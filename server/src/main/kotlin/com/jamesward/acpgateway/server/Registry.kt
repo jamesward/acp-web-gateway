@@ -25,6 +25,7 @@ data class RegistryAgent(
     val name: String,
     val version: String,
     val description: String = "",
+    val icon: String? = null,
     val args: List<String> = emptyList(),
     val distribution: Distribution = Distribution(),
 )

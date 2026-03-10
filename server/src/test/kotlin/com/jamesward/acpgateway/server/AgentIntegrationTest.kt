@@ -269,7 +269,10 @@ class AgentIntegrationTest {
         val shutdownComplete = java.util.concurrent.CountDownLatch(1)
         lateinit var server: io.ktor.server.engine.EmbeddedServer<io.ktor.server.cio.CIOApplicationEngine, io.ktor.server.cio.CIOApplicationEngine.Configuration>
         server = io.ktor.server.engine.embeddedServer(io.ktor.server.cio.CIO, port = port) {
-            module(manager, manager.agentName, GatewayMode.LOCAL, debug = true, dev = true, onReload = {
+            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
+            holder.manager = manager
+            holder.currentAgent = RegistryAgent(id = "test-agent", name = "test-agent", version = "1.0.0")
+            module(holder, GatewayMode.LOCAL, debug = true, dev = true, onReload = {
                 manager.close()
                 server.stop(100, 500)
                 shutdownComplete.countDown()
@@ -312,8 +315,10 @@ class AgentIntegrationTest {
     fun fullWebSocketRoundTripWithAttachment() {
         val env = skipIfNoAgent() ?: return
         testApplication {
+            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
+            holder.manager = env.manager
             application {
-                module(env.manager, "test-agent", GatewayMode.LOCAL)
+                module(holder, GatewayMode.LOCAL)
             }
             val wsClient = createClient { install(WebSockets) }
             wsClient.webSocket("/ws") {

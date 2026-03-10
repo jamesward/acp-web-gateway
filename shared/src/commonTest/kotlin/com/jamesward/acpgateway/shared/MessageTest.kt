@@ -33,8 +33,8 @@ class MessageTest {
             toolCallId = "tc-1",
             title = "Read file",
             options = listOf(
-                PermissionOptionInfo("allow", "Allow", "allow_once"),
-                PermissionOptionInfo("deny", "Deny", "reject_once"),
+                PermissionOptionInfo("allow", "Allow", PermissionKind.AllowOnce),
+                PermissionOptionInfo("deny", "Deny", PermissionKind.RejectOnce),
             ),
         )
         val encoded = json.encodeToString(WsMessage.serializer(), msg)

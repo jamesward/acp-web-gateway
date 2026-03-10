@@ -3,8 +3,10 @@ package com.jamesward.acpgateway.server
 import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.PermissionOptionKind
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.ToolCallContent
+import com.agentclientprotocol.model.ToolCallStatus
 import com.jamesward.acpgateway.shared.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
@@ -22,6 +24,37 @@ import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("WebSocketHandler")
 private val json = Json { ignoreUnknownKeys = true }
+
+// ---- ACP SDK → shared enum mappings ----
+
+fun ToolCallStatus?.toToolStatus(): ToolStatus = when (this) {
+    ToolCallStatus.COMPLETED -> ToolStatus.Completed
+    ToolCallStatus.FAILED -> ToolStatus.Failed
+    ToolCallStatus.IN_PROGRESS -> ToolStatus.InProgress
+    ToolCallStatus.PENDING, null -> ToolStatus.Pending
+}
+
+fun com.agentclientprotocol.model.ToolKind?.toToolKind(): ToolKind? = when (this) {
+    com.agentclientprotocol.model.ToolKind.READ -> ToolKind.Read
+    com.agentclientprotocol.model.ToolKind.EDIT -> ToolKind.Edit
+    com.agentclientprotocol.model.ToolKind.DELETE -> ToolKind.Delete
+    com.agentclientprotocol.model.ToolKind.MOVE -> ToolKind.Move
+    com.agentclientprotocol.model.ToolKind.SEARCH -> ToolKind.Search
+    com.agentclientprotocol.model.ToolKind.EXECUTE -> ToolKind.Execute
+    com.agentclientprotocol.model.ToolKind.THINK -> ToolKind.Think
+    com.agentclientprotocol.model.ToolKind.FETCH -> ToolKind.Fetch
+    com.agentclientprotocol.model.ToolKind.SWITCH_MODE -> ToolKind.SwitchMode
+    com.agentclientprotocol.model.ToolKind.OTHER -> ToolKind.Other
+    null -> null
+}
+
+fun PermissionOptionKind.toGatewayKind(): PermissionKind = when (this) {
+    PermissionOptionKind.ALLOW_ONCE -> PermissionKind.AllowOnce
+    PermissionOptionKind.ALLOW_ALWAYS -> PermissionKind.AllowAlways
+    PermissionOptionKind.REJECT_ONCE -> PermissionKind.RejectOnce
+    PermissionOptionKind.REJECT_ALWAYS -> PermissionKind.RejectAlways
+}
+
 private val markdownParser = Parser.builder().build()
 private val htmlRenderer = HtmlRenderer.builder().build()
 
@@ -53,7 +86,7 @@ private fun extractToolContent(content: List<ToolCallContent>?): ToolContent? {
         if (joined.length > 2000) joined.take(2000) + "..." else joined
     } else null
     val html = if (htmlParts.isNotEmpty()) htmlParts.joinToString("") else null
-    return if (hasDiff) ToolContent(html = (html ?: "") + (text?.let { "<pre>$it</pre>" } ?: ""))
+    return if (hasDiff) ToolContent(html = (html.orEmpty()) + (text?.let { "<pre>$it</pre>" }.orEmpty()))
     else ToolContent(text = text)
 }
 
@@ -89,17 +122,17 @@ private fun renderMarkdown(markdown: String): String {
 }
 
 // Per-prompt tool block state
-private class ServerToolBlockState {
+private class ServerToolBlockState(val blockId: String) {
     val entries = mutableListOf<ToolCallDisplay>()
-    var blockId: String = ""
 }
 
 // Per-prompt usage tracking
+private data class CostInfo(val amount: Double, val currency: String)
+
 private class UsageState {
     var used: Long = 0L
     var size: Long = 0L
-    var costAmount: Double? = null
-    var costCurrency: String? = null
+    var cost: CostInfo? = null
 
     fun formatUsage(): String? {
         if (size == 0L) return null
@@ -107,10 +140,10 @@ private class UsageState {
         val usedK = "%.0f".format(used / 1000.0)
         val sizeK = "%.0f".format(size / 1000.0)
         val base = "${usedK}K / ${sizeK}K tokens (${"%.0f".format(pct)}%)"
-        val cost = costAmount
-        return if (cost != null && cost > 0) {
-            val symbol = if (costCurrency == "USD") "$" else (costCurrency ?: "")
-            "$base \u00b7 $symbol${"%.2f".format(cost)}"
+        val c = cost
+        return if (c != null && c.amount > 0) {
+            val symbol = if (c.currency == "USD") "$" else c.currency
+            "$base \u00b7 $symbol${"%.2f".format(c.amount)}"
         } else base
     }
 }
@@ -290,12 +323,11 @@ private suspend fun handlePrompt(
         }
         val responseText = StringBuilder()
         val thoughtText = StringBuilder()
-        val toolBlock = ServerToolBlockState()
+        val turnCounter = System.currentTimeMillis()
+        val toolBlock = ServerToolBlockState(blockId = "tools-$turnCounter")
         val usage = UsageState()
-        var turnCounter = System.currentTimeMillis()
         val msgId = "msg-$turnCounter"
         val thoughtId = "thought-$turnCounter"
-        toolBlock.blockId = "tools-$turnCounter"
 
         // Store initial turn state so reconnecting clients get the IDs
         session.store.setTurnState(session.id, TurnState(
@@ -356,32 +388,30 @@ private suspend fun handlePrompt(
                         }
                         is SessionUpdate.ToolCall -> {
                             val tcId = update.toolCallId.value
-                            val status = update.status?.name?.lowercase() ?: "pending"
+                            val status = update.status.toToolStatus()
                             session.store.setToolCall(session.id, tcId, ToolCallInfo(
                                 title = update.title,
                                 status = status,
                                 startTime = System.currentTimeMillis(),
                             ))
                             val toolContent = extractToolContent(update.content)
-                            val kindStr = update.kind?.name?.lowercase()
-                            val locationStr = update.locations.firstOrNull()?.path
                             toolBlock.entries.add(ToolCallDisplay(
                                 id = tcId,
                                 title = update.title,
                                 status = status,
-                                content = toolContent?.text,
-                                contentHtml = toolContent?.html,
-                                kind = kindStr,
-                                location = locationStr,
+                                content = toolContent?.text ?: "",
+                                contentHtml = toolContent?.html ?: "",
+                                kind = update.kind.toToolKind(),
+                                location = update.locations.firstOrNull()?.path,
                             ))
                             sendToolBlockUpdate(toolBlock, session)
                             updateTurnState(session, thoughtId, msgId, toolBlock, thoughtText, responseText)
                         }
                         is SessionUpdate.ToolCallUpdate -> {
                             val tcId = update.toolCallId.value
-                            val status = update.status?.name?.lowercase() ?: "in_progress"
+                            val status = update.status.toToolStatus()
                             val existing = session.store.getToolCalls(session.id)[tcId]
-                            if (status == "completed" || status == "failed") {
+                            if (status.isTerminal) {
                                 session.store.removeToolCall(session.id, tcId)
                             } else {
                                 session.store.setToolCall(session.id, tcId, ToolCallInfo(
@@ -394,15 +424,13 @@ private suspend fun handlePrompt(
                             if (entry != null) {
                                 val idx = toolBlock.entries.indexOf(entry)
                                 val updateContent = extractToolContent(update.content)
-                                val updatedKind = update.kind?.name?.lowercase() ?: entry.kind
-                                val updatedLocation = update.locations?.firstOrNull()?.path ?: entry.location
                                 toolBlock.entries[idx] = entry.copy(
                                     title = if (update.title.isNullOrEmpty()) entry.title else update.title!!,
                                     status = status,
                                     content = updateContent?.text ?: entry.content,
                                     contentHtml = updateContent?.html ?: entry.contentHtml,
-                                    kind = updatedKind,
-                                    location = updatedLocation,
+                                    kind = update.kind.toToolKind() ?: entry.kind,
+                                    location = update.locations?.firstOrNull()?.path ?: entry.location,
                                 )
                             }
                             sendToolBlockUpdate(toolBlock, session)
@@ -413,8 +441,7 @@ private suspend fun handlePrompt(
                             usage.size = update.size
                             val cost = update.cost
                             if (cost != null) {
-                                usage.costAmount = cost.amount
-                                usage.costCurrency = cost.currency
+                                usage.cost = CostInfo(cost.amount, cost.currency)
                             }
                             // Re-render response/thought headers with updated usage
                             val usageStr = usage.formatUsage()

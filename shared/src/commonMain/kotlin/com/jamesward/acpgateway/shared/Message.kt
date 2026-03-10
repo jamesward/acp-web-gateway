@@ -27,7 +27,7 @@ sealed class WsMessage {
     data class ToolCall(
         val toolCallId: String,
         val title: String,
-        val status: String,
+        val status: ToolStatus,
         val content: String? = null,
     ) : WsMessage()
 
@@ -101,6 +101,40 @@ enum class Swap {
 }
 
 @Serializable
+enum class ToolStatus {
+    @SerialName("pending") Pending,
+    @SerialName("in_progress") InProgress,
+    @SerialName("completed") Completed,
+    @SerialName("failed") Failed;
+
+    val isTerminal: Boolean get() = this == Completed || this == Failed
+}
+
+@Serializable
+enum class ToolKind {
+    @SerialName("read") Read,
+    @SerialName("edit") Edit,
+    @SerialName("delete") Delete,
+    @SerialName("move") Move,
+    @SerialName("search") Search,
+    @SerialName("execute") Execute,
+    @SerialName("think") Think,
+    @SerialName("fetch") Fetch,
+    @SerialName("switch_mode") SwitchMode,
+    @SerialName("other") Other,
+}
+
+@Serializable
+enum class PermissionKind {
+    @SerialName("allow_once") AllowOnce,
+    @SerialName("allow_always") AllowAlways,
+    @SerialName("reject_once") RejectOnce,
+    @SerialName("reject_always") RejectAlways;
+
+    val isAllow: Boolean get() = this == AllowOnce || this == AllowAlways
+}
+
+@Serializable
 data class FileAttachment(
     val name: String,
     val mimeType: String,
@@ -111,7 +145,7 @@ data class FileAttachment(
 data class PermissionOptionInfo(
     val optionId: String,
     val name: String,
-    val kind: String,
+    val kind: PermissionKind,
 )
 
 @Serializable

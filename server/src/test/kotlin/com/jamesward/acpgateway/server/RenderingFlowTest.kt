@@ -46,8 +46,11 @@ class RenderingFlowTest {
         session.ready = true
         session.startEventForwarding()
         manager.sessions[session.id] = session
+        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
+        holder.manager = manager
+        holder.currentAgent = RegistryAgent(id = "test-agent", name = "test-agent", version = "1.0.0")
         application {
-            module(manager, "test-agent", GatewayMode.LOCAL)
+            module(holder, GatewayMode.LOCAL)
         }
         block(fakeSession)
     }
