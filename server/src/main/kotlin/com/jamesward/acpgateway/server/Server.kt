@@ -7,10 +7,11 @@ import io.ktor.server.html.*
 import io.ktor.server.http.content.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.response.*
+import com.jamesward.acpgateway.shared.WsMessage
+import com.jamesward.acpgateway.shared.appStylesheet
 import io.ktor.server.routing.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
-import io.ktor.server.webjars.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.runBlocking
@@ -23,11 +24,24 @@ enum class GatewayMode { LOCAL, PROXY }
 
 private val logger = LoggerFactory.getLogger("Server")
 
-fun Application.module(manager: AgentProcessManager, agentName: String, mode: GatewayMode, debug: Boolean = false) {
+/**
+ * A command handler intercepts slash-commands (e.g. `/autopilot`) before they reach the agent.
+ * Return a modified [WsMessage.Prompt] to send to the agent instead, or `null` to use the original prompt.
+ */
+typealias CommandHandler = suspend (prompt: WsMessage.Prompt, session: GatewaySession) -> WsMessage.Prompt?
+
+fun Application.module(
+    manager: AgentProcessManager,
+    agentName: String,
+    mode: GatewayMode,
+    debug: Boolean = false,
+    dev: Boolean = false,
+    onReload: () -> Unit = {},
+    commandHandler: CommandHandler? = null,
+) {
     install(ContentNegotiation) {
         json()
     }
-    install(Webjars)
     install(WebSockets) {
         pingPeriod = 15.seconds
         timeout = 15.seconds
@@ -41,7 +55,7 @@ fun Application.module(manager: AgentProcessManager, agentName: String, mode: Ga
                     val session = manager.sessions.values.firstOrNull()
                     if (session != null) {
                         call.respondHtml(HttpStatusCode.OK) {
-                            chatPage(agentName, debug = debug)
+                            chatPage(agentName, debug = debug, dev = dev)
                         }
                     } else {
                         call.respondText("No session available", status = HttpStatusCode.ServiceUnavailable)
@@ -54,7 +68,7 @@ fun Application.module(manager: AgentProcessManager, agentName: String, mode: Ga
                         close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No session available"))
                         return@webSocket
                     }
-                    handleChatWebSocket(session, manager)
+                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler)
                 }
             }
 
@@ -74,7 +88,7 @@ fun Application.module(manager: AgentProcessManager, agentName: String, mode: Ga
                         return@get
                     }
                     call.respondHtml(HttpStatusCode.OK) {
-                        chatPage(agentName, sessionId, debug)
+                        chatPage(agentName, sessionId, debug, dev)
                     }
                 }
 
@@ -87,30 +101,65 @@ fun Application.module(manager: AgentProcessManager, agentName: String, mode: Ga
                         close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Session not found"))
                         return@webSocket
                     }
-                    handleChatWebSocket(session, manager)
+                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler)
                 }
             }
+        }
+
+        get("/styles.css") {
+            call.respondText(appStylesheet(), ContentType.Text.CSS)
         }
 
         get("/health") {
             call.respondText("ok", ContentType.Text.Plain)
         }
 
+        if (dev) {
+            post("/reload") {
+                call.respondText("reloading", ContentType.Text.Plain)
+                // Run shutdown on a plain thread — not a coroutine that would be
+                // cancelled when the server stops.
+                Thread({
+                    Thread.sleep(200)
+                    logger.info("Reload requested — shutting down")
+                    onReload()
+                }, "reload-shutdown").start()
+            }
+        }
+
         staticResources("/static", "static")
     }
 }
 
-fun main(args: Array<String>) {
-    val agentId = parseAgentId(args)
-    val mode = parseMode(args)
-    val port = parsePort(args)
-    val debug = args.contains("--debug")
-    logger.info("Starting ACP Web Gateway for agent: {} (mode={}, port={}, debug={})", agentId, mode, port, debug)
+data class ServerConfig(
+    val agentId: String,
+    val mode: GatewayMode,
+    val port: Int,
+    val debug: Boolean,
+    val dev: Boolean,
+    val commandHandler: CommandHandler? = null,
+)
+
+fun parseServerConfig(args: Array<String>): ServerConfig = ServerConfig(
+    agentId = parseAgentId(args),
+    mode = parseMode(args),
+    port = parsePort(args),
+    debug = args.contains("--debug"),
+    dev = args.contains("--dev"),
+)
+
+/**
+ * Starts the server with the given config. Returns the manager and server for lifecycle control.
+ * Blocks the calling thread until the server is shut down.
+ */
+fun startServer(config: ServerConfig) {
+    logger.info("Starting ACP Web Gateway for agent: {} (mode={}, port={}, debug={}, dev={})",
+        config.agentId, config.mode, config.port, config.debug, config.dev)
 
     val (manager, agentDisplayName) = runBlocking {
         val registry = fetchRegistry()
-        val agent = registry.find { it.id == agentId }
-            ?: error("Agent '$agentId' not found in registry. Available: ${registry.map { it.id }}")
+        val agent = registry.find { it.id == config.agentId }
+            ?: error("Agent '${config.agentId}' not found in registry. Available: ${registry.map { it.id }}")
         logger.info("Found agent: {} ({})", agent.name, agent.version)
 
         val command = resolveAgentCommand(agent)
@@ -119,24 +168,44 @@ fun main(args: Array<String>) {
         mgr to agent.name
     }
 
-    Runtime.getRuntime().addShutdownHook(Thread { manager.close() })
-
-    if (mode == GatewayMode.LOCAL) {
+    if (config.mode == GatewayMode.LOCAL) {
         runBlocking { manager.createSession() }
     }
 
-    val server = embeddedServer(CIO, port = port) {
-        module(manager, agentDisplayName, mode, debug)
+    lateinit var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>
+    server = embeddedServer(CIO, configure = {
+        connector {
+            this.port = config.port
+        }
+    }) {
+        module(manager, agentDisplayName, config.mode, config.debug, config.dev,
+            onReload = {
+                manager.close()
+                server.stop(100, 500)
+                Runtime.getRuntime().halt(0)
+            },
+            commandHandler = config.commandHandler,
+        )
     }
     server.start(wait = false)
 
-    if (mode == GatewayMode.LOCAL) {
-        logger.info("Server started on http://localhost:{} (redirects to session)", port)
+    Runtime.getRuntime().addShutdownHook(Thread({
+        logger.info("Shutdown hook — closing agent and server")
+        manager.close()
+        server.stop(100, 500)
+    }, "shutdown-hook"))
+
+    if (config.mode == GatewayMode.LOCAL) {
+        logger.info("Server started on http://localhost:{} (redirects to session)", config.port)
     } else {
-        logger.info("Server started on http://localhost:{} (proxy mode, create sessions via UI)", port)
+        logger.info("Server started on http://localhost:{} (proxy mode, create sessions via UI)", config.port)
     }
 
     Thread.currentThread().join()
+}
+
+fun main(args: Array<String>) {
+    startServer(parseServerConfig(args))
 }
 
 private fun parseAgentId(args: Array<String>): String {

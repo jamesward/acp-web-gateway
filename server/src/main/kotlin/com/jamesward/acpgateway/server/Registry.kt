@@ -25,6 +25,7 @@ data class RegistryAgent(
     val name: String,
     val version: String,
     val description: String = "",
+    val args: List<String> = emptyList(),
     val distribution: Distribution = Distribution(),
 )
 
@@ -38,11 +39,13 @@ data class Distribution(
 @Serializable
 data class NpxDistribution(
     @SerialName("package") val packageName: String,
+    val args: List<String> = emptyList(),
 )
 
 @Serializable
 data class UvxDistribution(
     @SerialName("package") val packageName: String,
+    val args: List<String> = emptyList(),
 )
 
 @Serializable
@@ -71,11 +74,11 @@ fun resolveAgentCommand(agent: RegistryAgent): ProcessCommand {
     return when {
         dist.npx != null -> ProcessCommand(
             command = "npx",
-            args = listOf("-y", dist.npx.packageName),
+            args = listOf("-y", dist.npx.packageName) + dist.npx.args + agent.args,
         )
         dist.uvx != null -> ProcessCommand(
             command = "uvx",
-            args = listOf(dist.uvx.packageName),
+            args = listOf(dist.uvx.packageName) + dist.uvx.args + agent.args,
         )
         dist.binary != null -> {
             val platform = detectPlatformKey()
@@ -83,7 +86,7 @@ fun resolveAgentCommand(agent: RegistryAgent): ProcessCommand {
                 ?: error("No binary for platform '$platform'. Available: ${dist.binary.keys}")
             // For binary distributions, the archive needs to be downloaded first.
             // For now, assume the cmd is available on PATH or use npx/uvx instead.
-            ProcessCommand(command = bin.cmd, args = emptyList())
+            ProcessCommand(command = bin.cmd, args = agent.args)
         }
         else -> error("No distribution found for agent ${agent.id}")
     }

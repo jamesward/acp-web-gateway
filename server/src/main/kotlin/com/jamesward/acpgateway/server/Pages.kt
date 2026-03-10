@@ -1,102 +1,96 @@
 package com.jamesward.acpgateway.server
 
+import com.jamesward.acpgateway.shared.Css
+import com.jamesward.acpgateway.shared.Id
 import kotlinx.html.*
 import java.util.UUID
 
-fun HTML.chatPage(agentName: String, sessionId: UUID? = null, debug: Boolean = false) {
+fun HTML.chatPage(agentName: String, sessionId: UUID? = null, debug: Boolean = false, dev: Boolean = false) {
     head {
         meta { charset = "utf-8" }
         meta { name = "viewport"; content = "width=device-width, initial-scale=1" }
         title { +"ACP Gateway - $agentName" }
-        script { src = "/webjars/tailwindcss__browser/dist/index.global.js" }
-        style {
-            attributes["type"] = "text/tailwindcss"
-        }
-        style {
-            unsafe {
-                raw("""
-                    .message-content pre { background: #030712; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.5rem 0; }
-                    .message-content code { font-size: 0.875rem; }
-                    .message-content p { margin: 0.25rem 0; }
-                    .message-content h1 { font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0; }
-                    .message-content h2 { font-size: 1.25rem; font-weight: 700; margin: 0.5rem 0; }
-                    .message-content h3 { font-size: 1.125rem; font-weight: 600; margin: 0.25rem 0; }
-                    .message-content ul { list-style: disc; padding-left: 1.25rem; margin: 0.25rem 0; }
-                    .message-content ol { list-style: decimal; padding-left: 1.25rem; margin: 0.25rem 0; }
-                    .message-content li { margin: 0.125rem 0; }
-                    .message-content a { color: #60a5fa; text-decoration: underline; }
-                    .message-content blockquote { border-left: 4px solid #4b5563; padding-left: 1rem; font-style: italic; color: #9ca3af; margin: 0.5rem 0; }
-                    #messages::-webkit-scrollbar { width: 6px; }
-                    #messages::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
-                """.trimIndent())
-            }
-        }
+        link { rel = "stylesheet"; href = "/styles.css" }
     }
-    body("bg-gray-900 text-gray-100 flex flex-col h-screen") {
+    body {
         if (sessionId != null) {
             attributes["data-session-id"] = sessionId.toString()
         }
         if (debug) {
             attributes["data-debug"] = "true"
         }
-        div("bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center gap-3 shrink-0") {
-            div("text-lg font-semibold") { +"ACP Gateway" }
-            div("text-sm text-gray-400") { id = "agent-info"; +"Connecting..." }
+        div(classes = Css.HEADER) {
+            div(classes = Css.HEADER_TITLE) { +"ACP Gateway" }
+            div(classes = Css.HEADER_INFO) { id = Id.AGENT_INFO; +"Connecting..." }
+            if (dev) {
+                button(classes = Css.RELOAD_BTN) {
+                    id = Id.RELOAD_BTN
+                    type = ButtonType.button
+                    +"Reload"
+                }
+            }
         }
-        div("flex-1 overflow-y-auto p-4 space-y-4") {
-            id = "messages"
+        div {
+            id = Css.MESSAGES
         }
-        div("relative shrink-0") {
-            button(classes = "hidden absolute -top-12 left-1/2 -translate-x-1/2 bg-gray-700 hover:bg-gray-600 text-gray-300 w-9 h-9 rounded-full flex items-center justify-center border border-gray-600 shadow-lg z-10 cursor-pointer") {
-                id = "scroll-to-bottom-btn"
+        div {
+            attributes["style"] = "position: relative; flex-shrink: 0"
+            button(classes = "${Css.SCROLL_BTN} ${Css.HIDDEN}") {
+                id = Id.SCROLL_BTN
                 type = ButtonType.button
                 title = "Scroll to bottom"
-                // Down arrow SVG
                 unsafe {
                     raw("""<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>""")
                 }
             }
         }
-        div("shrink-0 border-t border-gray-700 bg-gray-800 p-4") {
-            div("hidden flex flex-wrap gap-2 mb-2") {
-                id = "file-preview"
+        div(classes = "${Css.STATUS_WRAP} ${Css.HIDDEN}") {
+            id = Id.TASK_STATUS_WRAP
+            div(classes = Css.STATUS_TEXT) {
+                id = Id.TASK_STATUS
             }
-            form(classes = "flex items-center gap-3 w-full max-w-full") {
-                id = "prompt-form"
-                button(classes = "shrink-0 self-center bg-gray-700 hover:bg-gray-600 text-gray-300 w-10 h-10 rounded-xl flex items-center justify-center text-xl font-bold border border-gray-600") {
-                    id = "attach-btn"
+        }
+        div(classes = Css.INPUT_BAR) {
+            div(classes = "${Css.FILE_PREVIEW} ${Css.HIDDEN}") {
+                id = Id.FILE_PREVIEW
+            }
+            form(classes = Css.INPUT_FORM) {
+                id = Id.PROMPT_FORM
+                button(classes = Css.ATTACH_BTN) {
+                    id = Id.ATTACH_BTN
                     type = ButtonType.button
                     title = "Attach files"
                     +"+"
                 }
-                input(classes = "hidden") {
-                    id = "file-input"
+                input(classes = Css.HIDDEN) {
+                    id = Id.FILE_INPUT
                     type = InputType.file
                     attributes["multiple"] = "true"
                 }
-                textArea(classes = "flex-1 min-w-0 bg-gray-700 text-gray-100 border border-gray-600 rounded-xl px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-base leading-relaxed placeholder-gray-400") {
-                    id = "prompt-input"
+                textArea(classes = Css.PROMPT_INPUT) {
+                    id = Id.PROMPT_INPUT
                     attributes["rows"] = "3"
                     placeholder = "Send a message..."
                 }
-                div("shrink-0 self-center flex flex-col items-center gap-2") {
-                    div("flex items-center gap-2") {
-                        button(classes = "bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed") {
-                            id = "send-btn"
+                div(classes = Css.BTN_GROUP) {
+                    div {
+                        attributes["style"] = "display: flex; align-items: center; gap: 8px"
+                        button(classes = Css.SEND_BTN) {
+                            id = Id.SEND_BTN
                             type = ButtonType.submit
                             +"Send"
                         }
                         if (debug) {
-                            button(classes = "hidden bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-3 rounded-xl font-medium text-sm") {
-                                id = "diagnose-btn"
+                            button(classes = "${Css.DIAGNOSE_BTN} ${Css.HIDDEN}") {
+                                id = Id.DIAGNOSE_BTN
                                 type = ButtonType.button
                                 +"Diagnose"
                             }
                         }
                     }
-                    label(classes = "flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none") {
-                        input(classes = "accent-blue-500") {
-                            id = "screenshot-toggle"
+                    label(classes = Css.SCREENSHOT_LABEL) {
+                        input(classes = Css.SCREENSHOT_CHECK) {
+                            id = Id.SCREENSHOT_TOGGLE
                             type = InputType.checkBox
                         }
                         +"Screenshot"
@@ -104,13 +98,18 @@ fun HTML.chatPage(agentName: String, sessionId: UUID? = null, debug: Boolean = f
                 }
             }
         }
-        div("hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50") {
-            id = "permission-dialog"
-            div("bg-gray-800 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-600") {
-                id = "permission-content"
+        div(classes = "${Css.PERM_OVERLAY} ${Css.HIDDEN}") {
+            id = Id.PERMISSION_DIALOG
+            div(classes = Css.PERM_CARD) {
+                id = Id.PERMISSION_CONTENT
             }
         }
-        script { src = "https://html2canvas.hertzen.com/dist/html2canvas.min.js" }
+        // idiomorph — lightweight DOM morph library (~3KB)
+        script {
+            unsafe {
+                raw(IDIOMORPH_INLINE)
+            }
+        }
         script { src = "/static/web.js" }
     }
 }
@@ -120,12 +119,25 @@ fun HTML.landingPage(agentName: String) {
         meta { charset = "utf-8" }
         meta { name = "viewport"; content = "width=device-width, initial-scale=1" }
         title { +"ACP Gateway - $agentName" }
-        script { src = "/webjars/tailwindcss__browser/dist/index.global.js" }
+        link { rel = "stylesheet"; href = "/styles.css" }
     }
-    body("bg-gray-900 text-gray-100 flex items-center justify-center h-screen") {
-        div("text-center space-y-6") {
-            h1("text-3xl font-bold") { +"ACP Gateway" }
-            p("text-gray-400") { +"Agent: $agentName" }
+    body {
+        div {
+            attributes["style"] = "display: flex; align-items: center; justify-content: center; height: 100vh; text-align: center"
+            div {
+                h1 { attributes["style"] = "font-size: 1.875rem; font-weight: bold; margin-bottom: 1.5rem"; +"ACP Gateway" }
+                p { attributes["style"] = "color: #9ca3af"; +"Agent: $agentName" }
+            }
         }
     }
 }
+
+// Minified idiomorph 0.3.0 — https://github.com/bigskysoftware/idiomorph
+// PATCHED: createMorphContext deep-merges config.callbacks onto defaults so that
+// callers can pass a partial callbacks object (e.g. only beforeNodeMorphed) without
+// losing the other default callbacks. Stock idiomorph uses a single Object.assign
+// which shallow-merges, replacing the entire callbacks object.
+// Provides window.Idiomorph.morph(oldNode, newHtml, {morphStyle: 'innerHTML'})
+private val IDIOMORPH_INLINE = """
+var Idiomorph=(function(){"use strict";var _defaultCallbacks={beforeNodeAdded:()=>true,afterNodeAdded:()=>{},beforeNodeMorphed:()=>true,afterNodeMorphed:()=>{},beforeNodeRemoved:()=>true,afterNodeRemoved:()=>{},beforeAttributeUpdated:()=>true};function morph(oldNode,newContent,config){if(oldNode instanceof Document)oldNode=oldNode.documentElement;let ctx=createMorphContext(oldNode,newContent,config);return morphNormalizedContent(oldNode,ctx)}function morphNormalizedContent(oldNode,ctx){let newContent=ctx.newContent;let morphStyle=ctx.config.morphStyle;if(morphStyle==="innerHTML"){morphChildren(newContent,oldNode,ctx);return oldNode.children}else if(morphStyle==="outerHTML"||morphStyle==null){let bestMatch=findBestNodeMatch(newContent,oldNode,ctx);let previousSibling=oldNode.previousSibling;let nextSibling=oldNode.nextSibling;let morphedNode=morphOldNodeTo(oldNode,bestMatch,ctx);if(morphedNode!==oldNode&&oldNode.parentNode){if(ctx.config.callbacks.beforeNodeRemoved(oldNode)===false)return oldNode;oldNode.parentNode.removeChild(oldNode);ctx.config.callbacks.afterNodeRemoved(oldNode)}return morphedNode}}function ignoreValueOfActiveElement(possibleActiveElement,ctx){return ctx.ignoreActiveValue&&possibleActiveElement===document.activeElement&&possibleActiveElement!==document.body}function morphOldNodeTo(oldNode,newNode,ctx){if(ctx.config.callbacks.beforeNodeMorphed(oldNode,newNode)===false)return oldNode;if(oldNode instanceof HTMLTemplateElement){oldNode=oldNode.content;newNode=newNode.content}syncNodeFrom(newNode,oldNode,ctx);if(!ignoreValueOfActiveElement(oldNode,ctx)){morphChildren(newNode,oldNode,ctx)}ctx.config.callbacks.afterNodeMorphed(oldNode,newNode);return oldNode}function morphChildren(newParent,oldParent,ctx){let nextNewChild=newParent.firstChild;let insertionPoint=oldParent.firstChild;let newChild;while(nextNewChild){newChild=nextNewChild;nextNewChild=newChild.nextSibling;if(insertionPoint==null){if(ctx.config.callbacks.beforeNodeAdded(newChild)===false)continue;oldParent.appendChild(newChild);ctx.config.callbacks.afterNodeAdded(newChild);continue}if(isIdSetMatch(newChild,insertionPoint,ctx)){morphOldNodeTo(insertionPoint,newChild,ctx);insertionPoint=insertionPoint.nextSibling;continue}let idSetMatch=findIdSetMatch(newParent,oldParent,newChild,insertionPoint,ctx);if(idSetMatch){insertionPoint=removeNodesBetween(insertionPoint,idSetMatch,ctx);morphOldNodeTo(idSetMatch,newChild,ctx);insertionPoint=insertionPoint?.nextSibling;continue}let softMatch=findSoftMatch(newParent,oldParent,newChild,insertionPoint,ctx);if(softMatch){insertionPoint=removeNodesBetween(insertionPoint,softMatch,ctx);morphOldNodeTo(softMatch,newChild,ctx);insertionPoint=insertionPoint?.nextSibling;continue}if(ctx.config.callbacks.beforeNodeAdded(newChild)===false)continue;oldParent.insertBefore(newChild,insertionPoint);ctx.config.callbacks.afterNodeAdded(newChild)}while(insertionPoint){let tempNode=insertionPoint;insertionPoint=insertionPoint.nextSibling;removeNode(tempNode,ctx)}}function syncNodeFrom(from,to,ctx){let type=from.nodeType;if(type===1){for(const fromAttribute of from.attributes){if(to.getAttribute(fromAttribute.name)!==fromAttribute.value)to.setAttribute(fromAttribute.name,fromAttribute.value)}for(const toAttribute of[...to.attributes]){if(!from.hasAttribute(toAttribute.name))to.removeAttribute(toAttribute.name)}if(!ignoreValueOfActiveElement(to,ctx)){syncInputValue(from,to,ctx)}}if(type===8||type===3){if(to.nodeValue!==from.nodeValue)to.nodeValue=from.nodeValue}if(!ignoreValueOfActiveElement(to,ctx)){}}function syncInputValue(from,to,ctx){if(from instanceof HTMLInputElement&&to instanceof HTMLInputElement&&from.type!=="file"){let fromValue=from.value;let toValue=to.value;syncBooleanAttribute(from,to,"checked",ctx);syncBooleanAttribute(from,to,"disabled",ctx);if(!from.hasAttribute("value")){to.value="";to.removeAttribute("value")}else if(fromValue!==toValue){to.setAttribute("value",fromValue);to.value=fromValue}}else if(from instanceof HTMLOptionElement){syncBooleanAttribute(from,to,"selected",ctx)}else if(from instanceof HTMLTextAreaElement&&to instanceof HTMLTextAreaElement){let fromValue=from.value;let toValue=to.value;if(fromValue!==toValue){to.value=fromValue}if(to.firstChild&&to.firstChild.nodeValue!==fromValue)to.firstChild.nodeValue=fromValue}}function syncBooleanAttribute(from,to,attributeName,ctx){if(from[attributeName]!==to[attributeName]){to[attributeName]=from[attributeName];if(from[attributeName])to.setAttribute(attributeName,"");else to.removeAttribute(attributeName)}}function removeNode(tempNode,ctx){removeIdsFromConsideration(ctx,tempNode);if(ctx.config.callbacks.beforeNodeRemoved(tempNode)===false)return;tempNode.remove();ctx.config.callbacks.afterNodeRemoved(tempNode)}function isIdSetMatch(node1,node2,ctx){if(node1==null||node2==null)return false;if(node1.nodeType===node2.nodeType&&node1.tagName===node2.tagName){if(node1.id!==""&&node1.id===node2.id)return true;return getIdIntersectionCount(ctx,node1,node2)>0}return false}function findIdSetMatch(newContent,oldParent,newChild,insertionPoint,ctx){let newChildIdSet=getIdSet(ctx,newChild);let potentialMatch=null;if(newChildIdSet&&newChildIdSet.size>0){let potentialMatch2=insertionPoint;while(potentialMatch2){if(isIdSetMatch(newChild,potentialMatch2,ctx))return potentialMatch2;potentialMatch2=potentialMatch2.nextSibling}}return null}function findSoftMatch(newContent,oldParent,newChild,insertionPoint,ctx){let potentialSoftMatch=insertionPoint;let nextSibling=newChild.nextSibling;let siblingsChecked=0;while(potentialSoftMatch){if(isSoftMatch(potentialSoftMatch,newChild))return potentialSoftMatch;potentialSoftMatch=potentialSoftMatch.nextSibling;siblingsChecked++;if(siblingsChecked>=20)break}return null}function isSoftMatch(oldNode,newNode){if(oldNode.nodeType!==newNode.nodeType)return false;if(oldNode.tagName!==newNode.tagName)return false;if(oldNode.id!==""&&oldNode.id!==newNode.id)return false;if(oldNode.id===""&&newNode.id!=="")return false;return true}function removeNodesBetween(startInclusive,endExclusive,ctx){while(startInclusive!==endExclusive){let tempNode=startInclusive;startInclusive=startInclusive.nextSibling;removeNode(tempNode,ctx)}return endExclusive}function findBestNodeMatch(newContent,oldNode,ctx){let currentElement;currentElement=newContent.firstChild;let bestElement=currentElement;let score=0;while(currentElement){let newScore=scoreElement(currentElement,oldNode,ctx);if(newScore>score){bestElement=currentElement;score=newScore}currentElement=currentElement.nextSibling}return bestElement}function scoreElement(node1,node2,ctx){if(isSoftMatch(node1,node2)){return 0.5+getIdIntersectionCount(ctx,node1,node2)}return 0}function createMorphContext(oldNode,newContent,config){var _cb=config&&config.callbacks;config=Object.assign({morphStyle:"outerHTML",callbacks:Object.assign({},_defaultCallbacks),ignoreActive:false,ignoreActiveValue:false,head:{style:"merge"}},config);if(_cb)config.callbacks=Object.assign({},_defaultCallbacks,_cb);let newDoc=parseContent(newContent);return{config:config,newContent:newDoc,idMap:createIdMap(oldNode,newDoc),deadIds:new Set(),ignoreActiveValue:config.ignoreActiveValue||config.ignoreActive}}function getIdIntersectionCount(ctx,node1,node2){let dominated=new Set();let dominated2=new Set();populateIdSet(node1,dominated);populateIdSet(node2,dominated2);let dominated3=new Set();for(let val of dominated){if(dominated2.has(val)&&!ctx.deadIds.has(val))dominated3.add(val)}return dominated3.size}function getIdSet(ctx,node){let dominated=new Set();populateIdSet(node,dominated);return dominated}function populateIdSet(node,idSet){if(node.nodeType===1){let id=node.id;if(id&&id!=="")idSet.add(id);for(let child of node.children)populateIdSet(child,idSet)}}function createIdMap(oldContent,newContent){let idMap={old:new Map(),new:new Map()};populateIdMapForNode(oldContent,idMap.old,"");populateIdMapForNode(newContent,idMap.new,"");return idMap}function populateIdMapForNode(node,idMap,parentId){if(node.nodeType===1){let id=node.id;if(id&&id!==""){let current=idMap.get(id);if(current==null){idMap.set(id,{element:node,count:1,parentId:parentId})}else{current.count++}}for(let child of node.children)populateIdMapForNode(child,idMap,id||parentId)}}function removeIdsFromConsideration(ctx,node){populateIdSet(node,ctx.deadIds)}function parseContent(newContent){if(typeof newContent!=='string')return newContent;var t=document.createElement('template');t.innerHTML=newContent;return t.content}return{morph:morph}})();
+""".trimIndent()

@@ -13,10 +13,6 @@ application {
     mainClass = "com.jamesward.acpgateway.server.ServerKt"
 }
 
-tasks.named<JavaExec>("run") {
-    workingDir = rootProject.projectDir
-}
-
 val ktorVersion = "3.4.1"
 val acpSdkVersion = "0.16.5"
 
@@ -33,17 +29,18 @@ dependencies {
     implementation("com.agentclientprotocol:acp:$acpSdkVersion")
     implementation("com.agentclientprotocol:acp-ktor-client:$acpSdkVersion")
     implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.7.0")
-    implementation("io.ktor:ktor-server-webjars:$ktorVersion")
-    implementation("org.webjars.npm:tailwindcss__browser:4.2.1")
     implementation("org.commonmark:commonmark:0.27.1")
+    implementation("io.github.java-diff-utils:java-diff-utils:4.15")
     implementation("ch.qos.logback:logback-classic:1.5.18")
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("io.orange-buffalo:testcontainers-playwright:0.12.0")
 }
 
 tasks.test {
     exclude("**/AgentIntegrationTest*")
+    exclude("**/BrowserIntegrationTest*")
 }
 
 tasks.register<Test>("integrationTest") {
@@ -52,6 +49,26 @@ tasks.register<Test>("integrationTest") {
     testClassesDirs = tasks.test.get().testClassesDirs
     classpath = tasks.test.get().classpath
     include("**/AgentIntegrationTest*")
+    systemProperty("test.acp.agent", System.getProperty("test.acp.agent") ?: project.findProperty("test.acp.agent")?.toString() ?: "claude-acp")
+    testLogging {
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        events(org.gradle.api.tasks.testing.logging.TestLogEvent.STARTED, org.gradle.api.tasks.testing.logging.TestLogEvent.PASSED, org.gradle.api.tasks.testing.logging.TestLogEvent.SKIPPED, org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED)
+    }
+}
+
+tasks.register<Test>("browserTest") {
+    description = "Runs browser integration tests with Playwright"
+    group = "verification"
+    testClassesDirs = tasks.test.get().testClassesDirs
+    classpath = tasks.test.get().classpath
+    include("**/BrowserIntegrationTest*")
+    dependsOn("processResources")
+    testLogging {
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        events(org.gradle.api.tasks.testing.logging.TestLogEvent.STARTED, org.gradle.api.tasks.testing.logging.TestLogEvent.PASSED, org.gradle.api.tasks.testing.logging.TestLogEvent.SKIPPED, org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED)
+    }
 }
 
 val copyWasm = tasks.register<Copy>("copyWasmAssets") {
@@ -62,4 +79,60 @@ val copyWasm = tasks.register<Copy>("copyWasmAssets") {
 
 tasks.named("processResources") {
     dependsOn(copyWasm)
+}
+
+tasks.named<JavaExec>("run") {
+    workingDir = rootProject.projectDir
+}
+
+abstract class DevRunTask @Inject constructor(
+    private val execOps: ExecOperations,
+) : DefaultTask() {
+    @get:Input
+    abstract val gradlew: Property<String>
+
+    @get:Input
+    abstract val appArgs: Property<String>
+
+    @get:Input
+    abstract val gradleTarget: Property<String>
+
+    @TaskAction
+    fun run() {
+        while (true) {
+            val result = execOps.exec {
+                commandLine(gradlew.get(), gradleTarget.get(), "--args=${appArgs.get()}")
+                isIgnoreExitValue = true
+            }
+            if (result.exitValue != 0) {
+                logger.lifecycle("Server exited with code ${result.exitValue}. Not restarting.")
+                break
+            }
+            logger.lifecycle("Server exited cleanly. Restarting...")
+        }
+    }
+}
+
+tasks.register<JavaExec>("runSimulate") {
+    description = "Runs the server with a simulated agent (FakeClientSession) for UI development"
+    group = "application"
+    mainClass = "com.jamesward.acpgateway.server.SimulationServerKt"
+    classpath = sourceSets["test"].runtimeClasspath
+    workingDir = rootProject.projectDir
+}
+
+tasks.register<JavaExec>("runAutoPilot") {
+    description = "Runs the server with autopilot support (Playwright container for self-evaluation via /autopilot command)"
+    group = "application"
+    mainClass = "com.jamesward.acpgateway.server.AutoPilotServerKt"
+    classpath = sourceSets["test"].runtimeClasspath
+    workingDir = rootProject.projectDir
+}
+
+tasks.register<DevRunTask>("devRun") {
+    description = "Runs the server in a restart loop for development. /autopilot command is always available."
+    group = "application"
+    gradlew = "${rootProject.projectDir}/gradlew"
+    gradleTarget = ":server:runAutoPilot"
+    appArgs = providers.gradleProperty("args").orElse("--agent claude-acp --debug --dev")
 }

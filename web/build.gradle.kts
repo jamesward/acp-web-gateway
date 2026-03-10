@@ -15,6 +15,7 @@ kotlin {
         wasmJsMain.dependencies {
             implementation(project(":shared"))
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
+            implementation("org.jetbrains.kotlin-wrappers:kotlin-browser:2026.3.8")
         }
         wasmJsTest.dependencies {
             implementation(kotlin("test"))

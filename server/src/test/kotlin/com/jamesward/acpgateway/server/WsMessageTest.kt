@@ -1,7 +1,9 @@
 package com.jamesward.acpgateway.server
 
+import com.jamesward.acpgateway.shared.Css
 import com.jamesward.acpgateway.shared.FileAttachment
 import com.jamesward.acpgateway.shared.PermissionOptionInfo
+import com.jamesward.acpgateway.shared.Swap
 import com.jamesward.acpgateway.shared.WsMessage
 import kotlinx.serialization.json.Json
 import org.commonmark.parser.Parser
@@ -141,6 +143,18 @@ class WsMessageTest {
         assertEquals("image.png", decoded.files[0].name)
         assertEquals("image/png", decoded.files[0].mimeType)
         assertEquals("data.csv", decoded.files[1].name)
+    }
+
+    @Test
+    fun htmlUpdateRoundTrip() {
+        val msg: WsMessage = WsMessage.HtmlUpdate(Css.MESSAGES, Swap.BeforeEnd, "<div>hello</div>")
+        val encoded = json.encodeToString(WsMessage.serializer(), msg)
+        assertTrue(encoded.contains("\"type\":\"html_update\""))
+        val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
+        assertIs<WsMessage.HtmlUpdate>(decoded)
+        assertEquals(Css.MESSAGES, decoded.target)
+        assertEquals(Swap.BeforeEnd, decoded.swap)
+        assertEquals("<div>hello</div>", decoded.html)
     }
 
     @Test

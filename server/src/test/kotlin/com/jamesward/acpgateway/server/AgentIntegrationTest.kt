@@ -13,7 +13,6 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Integration tests that spawn a real ACP agent (claude-code) and verify
@@ -31,6 +30,7 @@ class AgentIntegrationTest {
     private val tinyPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 
     companion object {
+        private val agentId = System.getProperty("test.acp.agent") ?: "claude-acp"
         private val agentEnv: AgentEnv? by lazy { initAgent() }
 
         private var skipReason: String? = null
@@ -56,27 +56,42 @@ class AgentIntegrationTest {
                 return null
             }
 
-            val agent = agents.find { it.id == "claude-acp" }
+            val agent = agents.find { it.id == agentId }
             if (agent == null) {
-                skipReason = "claude-acp not found in registry"
+                skipReason = "$agentId not found in registry"
                 return null
             }
             val command = resolveAgentCommand(agent)
 
             val manager = AgentProcessManager(command, System.getProperty("user.dir"))
-            try {
-                runBlocking { withTimeout(60.seconds) { manager.start() } }
-            } catch (e: Exception) {
-                skipReason = "Agent failed to start: ${e.message}"
-                return null
-            }
 
-            val session = try {
-                runBlocking { withTimeout(30.seconds) { manager.createSession() } }
-            } catch (e: Exception) {
-                skipReason = "Session creation failed: ${e.message}"
-                manager.close()
-                return null
+            // Use a thread-based timeout because coroutine withTimeout may not
+            // cancel SDK-internal blocking I/O (e.g. waiting for session/new response).
+            val executor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "agent-init").apply { isDaemon = true }
+            }
+            val session: GatewaySession
+            try {
+                val future = executor.submit(java.util.concurrent.Callable {
+                    runBlocking {
+                        manager.start()
+                        manager.createSession()
+                    }
+                })
+                session = try {
+                    future.get(30, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (e: java.util.concurrent.TimeoutException) {
+                    future.cancel(true)
+                    skipReason = "Agent init timed out (30s)"
+                    manager.close()
+                    return null
+                } catch (e: java.util.concurrent.ExecutionException) {
+                    skipReason = "Agent init failed: ${e.cause?.message}"
+                    manager.close()
+                    return null
+                }
+            } finally {
+                executor.shutdownNow()
             }
 
             // Auto-approve all permission requests in background
@@ -192,6 +207,108 @@ class AgentIntegrationTest {
     }
 
     @Test
+    fun reloadShutdownCompletesWithinTenSeconds() {
+        // Standalone agent — not shared with other tests.
+        val npxAvailable = try {
+            ProcessBuilder("npx", "--version")
+                .redirectErrorStream(true)
+                .start()
+                .waitFor() == 0
+        } catch (_: Exception) { false }
+        if (!npxAvailable) {
+            System.err.println("SKIP: npx not available")
+            return
+        }
+
+        val agents = try {
+            runBlocking { fetchRegistry() }
+        } catch (e: Exception) {
+            System.err.println("SKIP: Registry fetch failed: ${e.message}")
+            return
+        }
+
+        val agent = agents.find { it.id == agentId }
+        if (agent == null) {
+            System.err.println("SKIP: $agentId not found in registry")
+            return
+        }
+
+        val command = resolveAgentCommand(agent)
+        val manager = AgentProcessManager(command, System.getProperty("user.dir"))
+
+        // Start the agent and create a session with a 30s timeout
+        val initExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "close-test-init").apply { isDaemon = true }
+        }
+        try {
+            val future = initExecutor.submit(java.util.concurrent.Callable {
+                runBlocking {
+                    manager.start()
+                    manager.createSession()
+                }
+            })
+            try {
+                future.get(30, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                future.cancel(true)
+                System.err.println("SKIP: Agent start timed out (30s)")
+                manager.close()
+                return
+            } catch (e: java.util.concurrent.ExecutionException) {
+                System.err.println("SKIP: Agent start failed: ${e.cause?.message}")
+                manager.close()
+                return
+            }
+        } finally {
+            initExecutor.shutdownNow()
+        }
+
+        // Start a Ktor server with debug=true to enable /reload.
+        // onReload does orderly shutdown (same as production, minus halt).
+        val port = java.net.ServerSocket(0).use { it.localPort }
+        val shutdownComplete = java.util.concurrent.CountDownLatch(1)
+        lateinit var server: io.ktor.server.engine.EmbeddedServer<io.ktor.server.cio.CIOApplicationEngine, io.ktor.server.cio.CIOApplicationEngine.Configuration>
+        server = io.ktor.server.engine.embeddedServer(io.ktor.server.cio.CIO, port = port) {
+            module(manager, manager.agentName, GatewayMode.LOCAL, debug = true, dev = true, onReload = {
+                manager.close()
+                server.stop(100, 500)
+                shutdownComplete.countDown()
+            })
+        }
+        server.start(wait = false)
+
+        // Open a WebSocket connection (simulates browser)
+        val wsClient = java.net.http.HttpClient.newHttpClient()
+        val wsLatch = java.util.concurrent.CountDownLatch(1)
+        wsClient.newWebSocketBuilder()
+            .buildAsync(java.net.URI("ws://localhost:$port/ws"), object : java.net.http.WebSocket.Listener {
+                override fun onOpen(webSocket: java.net.http.WebSocket) {
+                    webSocket.request(Long.MAX_VALUE)
+                    wsLatch.countDown()
+                }
+                override fun onText(webSocket: java.net.http.WebSocket, data: CharSequence, last: Boolean): java.util.concurrent.CompletionStage<*>? {
+                    return null
+                }
+            })
+        assertTrue(wsLatch.await(10, java.util.concurrent.TimeUnit.SECONDS), "WebSocket should connect")
+
+        // Trigger reload via HTTP POST
+        val httpClient = java.net.http.HttpClient.newHttpClient()
+        val reloadRequest = java.net.http.HttpRequest.newBuilder()
+            .uri(java.net.URI("http://localhost:$port/reload"))
+            .POST(java.net.http.HttpRequest.BodyPublishers.noBody())
+            .build()
+        val response = httpClient.send(reloadRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
+        assertTrue(response.statusCode() == 200, "Reload should return 200")
+
+        // Shutdown must complete within 10 seconds
+        assertTrue(
+            shutdownComplete.await(10, java.util.concurrent.TimeUnit.SECONDS),
+            "Reload shutdown did not complete within 10 seconds",
+        )
+    }
+
+    @Test
     fun fullWebSocketRoundTripWithAttachment() {
         val env = skipIfNoAgent() ?: return
         testApplication {
@@ -214,26 +331,19 @@ class AgentIntegrationTest {
                 send(Frame.Text(json.encodeToString(WsMessage.serializer(), prompt)))
 
                 // Collect until TurnComplete
-                var gotAgentText = false
+                // Server sends HtmlUpdate messages (not AgentText) for all content.
+                // Permissions are auto-approved by the companion's approveJob at the SDK level.
+                var gotHtmlUpdate = false
                 var gotTurnComplete = false
                 withTimeout(120_000) {
                     for (frame in incoming) {
                         if (frame is Frame.Text) {
                             val msg = json.decodeFromString(WsMessage.serializer(), frame.readText())
                             when (msg) {
-                                is WsMessage.AgentText -> gotAgentText = true
+                                is WsMessage.HtmlUpdate -> gotHtmlUpdate = true
                                 is WsMessage.TurnComplete -> {
                                     gotTurnComplete = true
                                     break
-                                }
-                                is WsMessage.PermissionRequest -> {
-                                    // Auto-approve permission requests
-                                    val allowOption = msg.options.firstOrNull { it.kind == "allow_always" }
-                                        ?: msg.options.firstOrNull { it.kind == "allow_once" }
-                                    if (allowOption != null) {
-                                        val resp = WsMessage.PermissionResponse(msg.toolCallId, allowOption.optionId)
-                                        send(Frame.Text(json.encodeToString(WsMessage.serializer(), resp)))
-                                    }
                                 }
                                 else -> {}
                             }
@@ -241,7 +351,7 @@ class AgentIntegrationTest {
                     }
                 }
                 assertTrue(gotTurnComplete, "Should receive TurnComplete")
-                assertTrue(gotAgentText, "Agent should produce text output")
+                assertTrue(gotHtmlUpdate, "Agent should produce HTML updates")
             }
         }
     }

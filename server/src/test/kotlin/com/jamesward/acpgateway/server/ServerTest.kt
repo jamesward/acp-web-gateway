@@ -3,6 +3,7 @@ package com.jamesward.acpgateway.server
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.EmbeddedResourceResource
 import com.jamesward.acpgateway.shared.FileAttachment
+import com.jamesward.acpgateway.shared.Id
 import com.jamesward.acpgateway.shared.WsMessage
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
@@ -10,6 +11,8 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.server.testing.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.Json
 import java.util.UUID
 import kotlin.test.Test
@@ -28,13 +31,18 @@ class ServerTest {
         val command = ProcessCommand("echo", listOf("test"))
         val manager = AgentProcessManager(command, System.getProperty("user.dir"))
         val fakeClientSession = FakeClientSession()
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val testStore = InMemorySessionStore()
         val session = GatewaySession(
             id = UUID.randomUUID(),
             clientSession = fakeClientSession,
             clientOps = GatewayClientOperations(),
             cwd = System.getProperty("user.dir"),
+            scope = testScope,
+            store = testStore,
         )
         session.ready = true
+        session.startEventForwarding()
         manager.sessions[session.id] = session
         application {
             module(manager, "test-agent", mode)
@@ -73,9 +81,9 @@ class ServerTest {
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("ACP Gateway"))
-        assertTrue(body.contains("agent-info"))
-        assertTrue(body.contains("prompt-form"))
-        assertTrue(body.contains("permission-dialog"))
+        assertTrue(body.contains(Id.AGENT_INFO))
+        assertTrue(body.contains(Id.PROMPT_FORM))
+        assertTrue(body.contains(Id.PERMISSION_DIALOG))
         assertTrue(body.contains(sessionId.toString()))
     }
 
@@ -87,24 +95,19 @@ class ServerTest {
     }
 
     @Test
-    fun sessionPageUsesTailwindWebjar() = testApp(GatewayMode.PROXY) { sessionId, _ ->
+    fun sessionPageLinksToStylesheet() = testApp(GatewayMode.PROXY) { sessionId, _ ->
         val response = client.get("/s/$sessionId")
         val body = response.bodyAsText()
-        assertTrue(body.contains("/webjars/tailwindcss__browser/dist/index.global.js"))
+        assertTrue(body.contains("""/styles.css"""), "Should link to /styles.css")
     }
 
     @Test
-    fun sessionPageHasTailwindStyleTag() = testApp(GatewayMode.PROXY) { sessionId, _ ->
-        val response = client.get("/s/$sessionId")
-        val body = response.bodyAsText()
-        assertTrue(body.contains("""type="text/tailwindcss""""), "Should have text/tailwindcss style tag")
-    }
-
-    @Test
-    fun tailwindWebjarServed() = testApp { _, _ ->
-        val response = client.get("/webjars/tailwindcss__browser/dist/index.global.js")
+    fun stylesCssEndpointServesCSS() = testApp { _, _ ->
+        val response = client.get("/styles.css")
         assertEquals(HttpStatusCode.OK, response.status)
-        assertTrue(response.bodyAsText().isNotEmpty())
+        assertEquals(ContentType.Text.CSS, response.contentType()?.withoutParameters())
+        val body = response.bodyAsText()
+        assertTrue(body.contains("body"), "CSS should contain body styles")
     }
 
     @Test

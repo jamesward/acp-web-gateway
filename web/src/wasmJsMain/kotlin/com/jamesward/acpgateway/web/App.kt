@@ -2,151 +2,120 @@
 
 package com.jamesward.acpgateway.web
 
+import com.jamesward.acpgateway.shared.Css
 import com.jamesward.acpgateway.shared.FileAttachment
-import com.jamesward.acpgateway.shared.PermissionOptionInfo
+import com.jamesward.acpgateway.shared.Id
+import com.jamesward.acpgateway.shared.Swap
 import com.jamesward.acpgateway.shared.WsMessage
+import com.jamesward.acpgateway.shared.filePreviewHtml
 import kotlinx.serialization.json.Json
+import web.dom.document
+import web.html.HTMLButtonElement
+import web.html.HTMLElement
+import web.html.HTMLFormElement
+import web.html.HTMLInputElement
+import web.html.HTMLTextAreaElement
+import web.location.location
+import web.sockets.WebSocket
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-// JS interop external declarations
-@JsFun("() => document")
-private external fun jsDocument(): JsAny
+// ---- DOM helpers for kotlin-browser branded string types ----
 
 @JsFun("(id) => document.getElementById(id)")
-private external fun getElementById(id: JsString): JsAny?
-
-@JsFun("(tag) => document.createElement(tag)")
-private external fun createElement(tag: JsString): JsAny
-
-@JsFun("(el, text) => { el.textContent = text; }")
-private external fun setTextContent(el: JsAny, text: JsString)
-
-@JsFun("(el) => el.textContent || ''")
-private external fun getTextContent(el: JsAny): JsString
-
-@JsFun("(el, cls) => { el.className = cls; }")
-private external fun setClassName(el: JsAny, cls: JsString)
-
-@JsFun("(el, key, value) => { el.setAttribute(key, value); }")
-private external fun setAttribute(el: JsAny, key: JsString, value: JsString)
-
-@JsFun("(el, child) => el.appendChild(child)")
-private external fun appendChild(el: JsAny, child: JsAny)
-
-@JsFun("(parent, child) => parent.removeChild(child)")
-private external fun removeChild(parent: JsAny, child: JsAny)
-
-@JsFun("(el, html) => { el.innerHTML = html; }")
-private external fun setInnerHTML(el: JsAny, html: JsString)
-
-@JsFun("(el) => el.scrollHeight")
-private external fun getScrollHeight(el: JsAny): JsNumber
-
-@JsFun("(el, v) => { el.scrollTop = v; }")
-private external fun setScrollTop(el: JsAny, v: JsNumber)
-
-@JsFun("(el) => el.scrollTop")
-private external fun getScrollTop(el: JsAny): JsNumber
-
-@JsFun("(el) => el.clientHeight")
-private external fun getClientHeight(el: JsAny): JsNumber
-
-@JsFun("(el, handler) => { el.addEventListener('scroll', handler); }")
-private external fun onScroll(el: JsAny, handler: JsAny)
-
-@JsFun("(el, behavior) => { el.scrollTo({ top: el.scrollHeight, behavior: behavior }); }")
-private external fun scrollToBottomSmooth(el: JsAny, behavior: JsString)
-
-@JsFun("(el) => el.value || ''")
-private external fun getValue(el: JsAny): JsString
-
-@JsFun("(el, v) => { el.value = v; }")
-private external fun setValue(el: JsAny, v: JsString)
-
-@JsFun("(el, v) => { el.disabled = v; }")
-private external fun setDisabled(el: JsAny, v: JsBoolean)
-
-@JsFun("(el) => el.focus()")
-private external fun focus(el: JsAny)
+private external fun getEl(id: JsString): JsAny?
 
 @JsFun("(el, cls) => el.classList.add(cls)")
-private external fun classListAdd(el: JsAny, cls: JsString)
+private external fun addCls(el: JsAny, cls: JsString)
 
 @JsFun("(el, cls) => el.classList.remove(cls)")
-private external fun classListRemove(el: JsAny, cls: JsString)
+private external fun rmCls(el: JsAny, cls: JsString)
 
-@JsFun("(el, id) => { el.id = id; }")
-private external fun setId(el: JsAny, id: JsString)
+@JsFun("(el, cls) => { el.className = cls; }")
+private external fun setCls(el: JsAny, cls: JsString)
 
-@JsFun("(url) => new WebSocket(url)")
-private external fun newWebSocket(url: JsString): JsAny
+@JsFun("(el, html) => { el.innerHTML = html; }")
+private external fun setHtml(el: JsAny, html: JsString)
 
-@JsFun("(ws, msg) => ws.send(msg)")
-private external fun wsSend(ws: JsAny, msg: JsString)
+@JsFun("(el, pos, html) => el.insertAdjacentHTML(pos, html)")
+private external fun insertHtml(el: JsAny, pos: JsString, html: JsString)
 
-@JsFun("(ws, handler) => { ws.onopen = handler; }")
-private external fun wsOnOpen(ws: JsAny, handler: JsAny)
-
-@JsFun("(ws, handler) => { ws.onmessage = (e) => handler(e.data); }")
-private external fun wsOnMessage(ws: JsAny, handler: JsAny)
-
-@JsFun("(ws, handler) => { ws.onclose = handler; }")
-private external fun wsOnClose(ws: JsAny, handler: JsAny)
-
-@JsFun("(ws, handler) => { ws.onerror = handler; }")
-private external fun wsOnError(ws: JsAny, handler: JsAny)
-
-@JsFun("() => window.location.protocol")
-private external fun getProtocol(): JsString
-
-@JsFun("() => window.location.host")
-private external fun getHost(): JsString
-
-@JsFun("() => window.location.pathname")
-private external fun getPathname(): JsString
+// ---- Event binding (Kotlin/Wasm lambdas aren't JS functions, so @JsFun bridges are needed) ----
 
 @JsFun("(el, handler) => { el.onsubmit = (e) => { e.preventDefault(); handler(); }; }")
-private external fun onSubmit(el: JsAny, handler: JsAny)
+private external fun onSubmit(el: JsAny, handler: () -> Unit)
 
-@JsFun("(el, handler) => { el.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handler(); } }; }")
-private external fun onEnterKey(el: JsAny, handler: JsAny)
+@JsFun("(el, handler) => { el.onkeydown = (e) => handler(e); }")
+private external fun onKeyDown(el: JsAny, handler: (JsAny) -> Unit)
 
-@JsFun("(el, handler) => { el.onclick = handler; }")
-private external fun onClick(el: JsAny, handler: JsAny)
+@JsFun("(el, handler) => { el.onclick = () => handler(); }")
+private external fun onClick(el: JsAny, handler: () -> Unit)
 
-@JsFun("(el) => el.checked")
-private external fun isChecked(el: JsAny): JsBoolean
+@JsFun("(el, handler) => { el.onchange = () => handler(); }")
+private external fun onChange(el: JsAny, handler: () -> Unit)
 
-@JsFun("(callback) => { if (typeof html2canvas === 'undefined') { callback(''); return; } html2canvas(document.body, { useCORS: true, logging: false }).then(function(canvas) { try { callback(canvas.toDataURL('image/png').replace('data:image/png;base64,', '')); } catch(e) { callback(''); } }).catch(function() { callback(''); }); }")
-private external fun captureScreenshot(callback: JsAny)
+@JsFun("(el, handler) => { el.onscroll = () => handler(); }")
+private external fun onScroll(el: JsAny, handler: () -> Unit)
 
-@JsFun("(callback) => (data) => callback(data)")
-private external fun wrapScreenshotCallback(callback: (JsString) -> Unit): JsAny
+@JsFun("(ws, handler) => { ws.onopen = () => handler(); }")
+private external fun wsOnOpen(ws: JsAny, handler: () -> Unit)
 
-@JsFun("() => document.body.hasAttribute('data-debug')")
-private external fun isDebugMode(): JsBoolean
+@JsFun("(ws, handler) => { ws.onmessage = (e) => handler(e.data); }")
+private external fun wsOnMessage(ws: JsAny, handler: (JsString) -> Unit)
 
-@JsFun("(callback, ms) => setInterval(callback, ms)")
-private external fun jsSetInterval(callback: JsAny, ms: JsNumber): JsNumber
+@JsFun("(ws, handler) => { ws.onclose = () => handler(); }")
+private external fun wsOnClose(ws: JsAny, handler: () -> Unit)
 
-@JsFun("(id) => clearInterval(id)")
-private external fun jsClearInterval(id: JsNumber)
+@JsFun("(ws, handler) => { ws.onerror = () => handler(); }")
+private external fun wsOnError(ws: JsAny, handler: () -> Unit)
 
-@JsFun("() => Date.now()")
-private external fun dateNow(): JsNumber
+// ---- Keyboard event helpers ----
 
-@JsFun("(el) => el.files ? el.files.length : 0")
-private external fun getFileCount(el: JsAny): JsNumber
+@JsFun("(e) => e.key")
+private external fun eventKey(e: JsAny): JsString
+
+@JsFun("(e) => e.shiftKey")
+private external fun eventShiftKey(e: JsAny): JsBoolean
+
+@JsFun("(e) => e.preventDefault()")
+private external fun preventDefault(e: JsAny)
+
+// ---- Scroll helpers ----
+
+@JsFun("(el, top) => el.scrollTo({ top: top, behavior: 'smooth' })")
+private external fun scrollToSmooth(el: JsAny, top: JsNumber)
+
+// ---- Idiomorph interop ----
+// Only our custom beforeNodeMorphed is needed here — idiomorph (patched) deep-merges
+// partial callbacks onto its defaults, so unspecified callbacks retain default behavior.
+
+@JsFun("""(el, html) => Idiomorph.morph(el, html, {
+    morphStyle: 'outerHTML',
+    callbacks: {
+        beforeNodeMorphed: function(oldNode, newNode) {
+            if (oldNode.tagName === 'DETAILS') {
+                if (oldNode.open) newNode.setAttribute('open', '');
+                else newNode.removeAttribute('open');
+                if (oldNode.hasAttribute('data-user-toggled')) newNode.setAttribute('data-user-toggled', '');
+            }
+            if (oldNode.hasAttribute && oldNode.hasAttribute('data-user-expanded')) {
+                newNode.setAttribute('data-user-expanded', '');
+            }
+            return true;
+        }
+    }
+})""")
+private external fun morphElement(el: JsAny, html: JsString)
+
+// ---- File reading ----
 
 @JsFun("(el, i, nameCallback, dataCallback) => { const f = el.files[i]; nameCallback(f.name); nameCallback(f.type || 'application/octet-stream'); const r = new FileReader(); r.onload = () => { const b64 = r.result.split(',')[1] || ''; dataCallback(b64); }; r.readAsDataURL(f); }")
 private external fun readFileAt(el: JsAny, index: JsNumber, nameCallback: JsAny, dataCallback: JsAny)
 
-@JsFun("(el, handler) => { el.onchange = handler; }")
-private external fun onChange(el: JsAny, handler: JsAny)
+@JsFun("(dt, i, nameCallback, dataCallback) => { const f = dt.files[i]; nameCallback(f.name); nameCallback(f.type || 'application/octet-stream'); const r = new FileReader(); r.onload = () => { const b64 = r.result.split(',')[1] || ''; dataCallback(b64); }; r.readAsDataURL(f); }")
+private external fun readDtFileAt(dt: JsAny, index: JsNumber, nameCallback: JsAny, dataCallback: JsAny)
 
-@JsFun("(el) => { el.value = ''; }")
-private external fun resetFileInput(el: JsAny)
+// ---- Drag & drop / paste ----
 
 @JsFun("(el, handler) => { el.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); }; el.ondrop = (e) => { e.preventDefault(); e.stopPropagation(); handler(e.dataTransfer); }; }")
 private external fun onDrop(el: JsAny, handler: JsAny)
@@ -157,140 +126,472 @@ private external fun wrapDropCallback(callback: (JsAny) -> Unit): JsAny
 @JsFun("(dt) => dt.files ? dt.files.length : 0")
 private external fun dtFileCount(dt: JsAny): JsNumber
 
-@JsFun("(dt, i, nameCallback, dataCallback) => { const f = dt.files[i]; nameCallback(f.name); nameCallback(f.type || 'application/octet-stream'); const r = new FileReader(); r.onload = () => { const b64 = r.result.split(',')[1] || ''; dataCallback(b64); }; r.readAsDataURL(f); }")
-private external fun readDtFileAt(dt: JsAny, index: JsNumber, nameCallback: JsAny, dataCallback: JsAny)
-
 @JsFun("(el, handler) => { el.addEventListener('paste', (e) => { if (e.clipboardData) { if (e.clipboardData.files && e.clipboardData.files.length > 0) { e.preventDefault(); handler(e.clipboardData); return; } if (e.clipboardData.items) { const dt = new DataTransfer(); for (let i = 0; i < e.clipboardData.items.length; i++) { if (e.clipboardData.items[i].kind === 'file') { dt.items.add(e.clipboardData.items[i].getAsFile()); } } if (dt.files.length > 0) { e.preventDefault(); handler(dt); } } } }); }")
 private external fun onPasteFiles(el: JsAny, handler: JsAny)
 
-@JsFun("(el) => el.childElementCount")
-private external fun childElementCount(el: JsAny): JsNumber
+// ---- Event delegation ----
 
-@JsFun("(el) => el.click()")
-private external fun clickElement(el: JsAny)
+@JsFun("(el, callback) => { el.addEventListener('click', (e) => { const btn = e.target.closest('[data-tool-call-id]'); if (btn) { callback(btn.getAttribute('data-tool-call-id'), btn.getAttribute('data-option-id')); } }); }")
+private external fun onPermissionClick(el: JsAny, callback: JsAny)
 
-private data class QueuedPermission(
-    val toolCallId: String,
-    val title: String,
-    val options: List<PermissionOptionInfo>,
-)
+@JsFun("(callback) => (a, b) => callback(a, b)")
+private external fun wrapTwoStringCallback(callback: (JsString, JsString) -> Unit): JsAny
 
-// Global state
-private var ws: JsAny? = null
-private var currentAssistantDiv: JsAny? = null
-private var currentThoughtDiv: JsAny? = null
-private var taskStartTime: Double = 0.0
-private var statusTimerId: JsNumber? = null
-private var currentActivity: String = "Thinking"
-private val permissionQueue = ArrayDeque<QueuedPermission>()
-private var permissionDialogVisible = false
-private val pendingFiles = mutableListOf<FileAttachment>()
-
-fun main() {
-    connect()
-}
-
-private fun connect() {
-    val protocol = if (getProtocol().toString() == "https:") "wss" else "ws"
-    val host = getHost().toString()
-    val pathname = getPathname().toString().trimEnd('/')
-    val url = "$protocol://$host$pathname/ws"
-    val socket = newWebSocket(url.toJsString())
-    ws = socket
-
-    wsOnOpen(socket, noopHandler())
-    wsOnMessage(socket, createMessageHandler())
-    wsOnClose(socket, createCloseHandler())
-    wsOnError(socket, noopHandler())
-
-    setupForm()
-}
-
-@JsFun("() => () => {}")
-private external fun noopHandler(): JsAny
+@JsFun("(el, callback) => { el.addEventListener('click', (e) => { const btn = e.target.closest('[data-file-index]'); if (btn) { callback(btn.getAttribute('data-file-index')); } }); }")
+private external fun onFileRemoveClick(el: JsAny, callback: JsAny)
 
 @JsFun("(callback) => (data) => callback(data)")
 private external fun wrapStringCallback(callback: (JsString) -> Unit): JsAny
 
-@JsFun("(callback) => () => callback()")
-private external fun wrapVoidCallback(callback: () -> Unit): JsAny
+// ---- Debug: console capture & browser state ----
 
-private fun createMessageHandler(): JsAny {
-    return wrapStringCallback { data -> onMessage(data.toString()) }
+@JsFun("() => { window.__acpConsoleLogs = []; const orig = { log: console.log, warn: console.warn, error: console.error }; ['log','warn','error'].forEach(function(level) { console[level] = function() { var args = Array.prototype.slice.call(arguments); window.__acpConsoleLogs.push({ level: level, message: args.map(String).join(' '), ts: Date.now() }); if (window.__acpConsoleLogs.length > 200) window.__acpConsoleLogs.shift(); orig[level].apply(console, args); }; }); }")
+private external fun installConsoleCapture()
+
+@JsFun("() => { if (!window.__acpConsoleLogs) return '[]'; return JSON.stringify(window.__acpConsoleLogs.slice(-50)); }")
+private external fun getConsoleLogs(): JsString
+
+// Inspect DOM elements: dumps HTML structure and computed styles for content blocks
+@JsFun("""(selector) => {
+    var els = document.querySelectorAll(selector);
+    if (!els.length) return JSON.stringify({error: 'no elements match: ' + selector, count: 0});
+    var results = [];
+    for (var i = 0; i < Math.min(els.length, 5); i++) {
+        var el = els[i];
+        var cs = window.getComputedStyle(el);
+        var info = {
+            tag: el.tagName.toLowerCase(),
+            id: el.id || null,
+            classes: el.className,
+            padding: cs.padding,
+            margin: cs.margin,
+            backgroundColor: cs.backgroundColor,
+            borderRadius: cs.borderRadius,
+            maxWidth: cs.maxWidth,
+            width: cs.width,
+            display: cs.display,
+            fontSize: cs.fontSize,
+            outerHTMLTruncated: el.outerHTML.substring(0, 500),
+            childCount: el.childElementCount,
+            children: []
+        };
+        for (var j = 0; j < Math.min(el.children.length, 10); j++) {
+            var child = el.children[j];
+            var ccs = window.getComputedStyle(child);
+            info.children.push({
+                tag: child.tagName.toLowerCase(),
+                classes: child.className,
+                padding: ccs.padding,
+                margin: ccs.margin,
+                backgroundColor: ccs.backgroundColor,
+                display: ccs.display
+            });
+        }
+        results.push(info);
+    }
+    return JSON.stringify({count: els.length, elements: results}, null, 2);
+}""")
+private external fun inspectElements(selector: JsString): JsString
+
+@JsFun("() => { var msgs = document.getElementById('messages'); var msgCount = msgs ? msgs.childElementCount : 0; var ws = window.__acpWsReadyState !== undefined ? window.__acpWsReadyState : -1; var permDlg = document.getElementById('permission-dialog'); var ssToggle = document.getElementById('screenshot-toggle'); var filePrev = document.getElementById('file-preview'); return JSON.stringify({ messageCount: msgCount, webSocketReadyState: ws, bodyAttributes: Array.from(document.body.attributes).reduce(function(o,a){ o[a.name]=a.value; return o; }, {}), permissionDialogVisible: permDlg ? !permDlg.classList.contains('hidden') : false, screenshotChecked: ssToggle ? ssToggle.checked : false, pendingFileCount: filePrev ? filePrev.childElementCount : 0, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, userAgent: navigator.userAgent }); }")
+private external fun getDomState(): JsString
+
+@JsFun("(v) => { window.__acpWsReadyState = v; }")
+private external fun setWsReadyState(v: JsNumber)
+
+@JsFun("(ms, callback) => setTimeout(callback, ms)")
+private external fun setTimeout(ms: JsNumber, callback: () -> Unit)
+
+// ---- Date.now() / timers ----
+
+@JsFun("() => Date.now()")
+private external fun dateNow(): JsNumber
+
+@JsFun("(handler, ms) => setInterval(() => handler(), ms)")
+private external fun jsSetInterval(handler: () -> Unit, ms: JsNumber): JsNumber
+
+@JsFun("(id) => clearInterval(id)")
+private external fun jsClearInterval(id: JsNumber)
+
+// ---- Reload: POST then poll /health until server is back ----
+
+@JsFun("""(url, callback) => {
+  fetch(url, { method: 'POST' }).then(() => callback()).catch(() => callback());
+}""")
+private external fun postRequest(url: JsString, callback: () -> Unit)
+
+@JsFun("""(callback) => {
+  var poll = setInterval(function() {
+    fetch('/health').then(function(r) {
+      if (r.ok) { clearInterval(poll); callback(); }
+    }).catch(function() {});
+  }, 1000);
+}""")
+private external fun pollUntilHealthy(callback: () -> Unit)
+
+@JsFun("() => location.reload()")
+private external fun reloadPage()
+
+// ---- Screenshot via SVG foreignObject → Canvas → base64 PNG ----
+
+@JsFun("""(callback) => {
+  try {
+    var msgs = document.getElementById('messages');
+    if (!msgs) { callback(''); return; }
+    var clone = msgs.cloneNode(true);
+    clone.removeAttribute('id');
+    var css = '';
+    for (var i = 0; i < document.styleSheets.length; i++) {
+      try {
+        var rules = document.styleSheets[i].cssRules;
+        for (var j = 0; j < rules.length; j++) css += rules[j].cssText + '\n';
+      } catch(e) {}
+    }
+    var linkEl = document.querySelector('link[href="/styles.css"]');
+    if (linkEl && linkEl.sheet) {
+      try {
+        var rules = linkEl.sheet.cssRules;
+        for (var j = 0; j < rules.length; j++) css += rules[j].cssText + '\n';
+      } catch(e) {}
+    }
+    var width = msgs.offsetWidth || 800;
+    var height = msgs.scrollHeight || 600;
+    var xhtml = new XMLSerializer().serializeToString(clone);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">'
+      + '<foreignObject width="100%" height="100%">'
+      + '<div xmlns="http://www.w3.org/1999/xhtml">'
+      + '<style>' + css.replace(/</g, '\\u003c') + '</style>'
+      + xhtml
+      + '</div></foreignObject></svg>';
+    var dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+    var img = new Image();
+    img.onload = function() {
+      var canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = Math.min(height, 4096);
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      var pngDataUrl = canvas.toDataURL('image/png');
+      var base64 = pngDataUrl.split(',')[1] || '';
+      callback(base64);
+    };
+    img.onerror = function() { callback(''); };
+    img.src = dataUri;
+  } catch(e) { console.error('Screenshot error:', e); callback(''); }
+}""")
+private external fun captureScreenshot(callback: JsAny)
+
+// ---- Auto-collapse older blocks to save vertical space ----
+// Shows recent (bottom) lines via scrollTop trick + mask-image fade at top.
+// Skips user messages and blocks the user manually expanded.
+
+@JsFun("""(messagesId, collapsedCls) => {
+    var m = document.getElementById(messagesId);
+    if (!m) return;
+    var ch = m.children;
+    var n = ch.length;
+    if (n <= 2) return;
+    // Don't collapse if user is scrolled up reading history
+    if (m.scrollHeight - m.scrollTop - m.clientHeight > 200) return;
+    // Only collapse if overflowing
+    if (m.scrollHeight <= m.clientHeight + 100) return;
+    for (var i = 0; i < n - 2; i++) {
+        if (m.scrollHeight <= m.clientHeight + 100) break;
+        var c = ch[i];
+        if (c.hasAttribute('data-user-expanded')) continue;
+        if (c.classList.contains('msg-wrap-user')) continue;
+        var cb = c.querySelector('.content-block > details');
+        if (cb && !cb.hasAttribute('data-user-toggled') && cb.open) { cb.removeAttribute('open'); continue; }
+        var d = c.querySelector('.tool-block > details');
+        if (d && !d.hasAttribute('data-user-toggled') && d.open) { d.removeAttribute('open'); }
+    }
+}""")
+private external fun autoCollapseOlderBlocks(messagesId: JsString, collapsedCls: JsString)
+
+@JsFun("""(messagesId, collapsedCls) => {
+    var m = document.getElementById(messagesId);
+    if (!m) return;
+    m.addEventListener('click', function(e) {
+        var el = e.target.closest('.' + collapsedCls);
+        if (el) {
+            el.classList.remove(collapsedCls);
+            var wrap = el.closest('.msg-wrap-assistant');
+            if (wrap) wrap.setAttribute('data-user-expanded', '');
+        }
+    });
+    m.addEventListener('toggle', function(e) {
+        if (e.target.tagName === 'DETAILS') {
+            e.target.setAttribute('data-user-toggled', '');
+            if (e.target.open) {
+                var wrap = e.target.closest('.msg-wrap-assistant');
+                if (wrap) wrap.setAttribute('data-user-expanded', '');
+            }
+        }
+    }, true);
+}""")
+private external fun setupCollapseClickHandler(messagesId: JsString, collapsedCls: JsString)
+
+// ---- Typed element accessors ----
+
+private fun byId(id: String): HTMLElement? = getEl(id.toJsString())?.unsafeCast<HTMLElement>()
+private fun <T : HTMLElement> byId(id: String, type: Unit = Unit): T? = getEl(id.toJsString())?.unsafeCast<T>()
+
+// ---- Global state ----
+
+private var ws: WebSocket? = null
+private var agentWorking = false
+private var reloading = false
+private var taskStartTime: Double = 0.0
+private var timerIntervalId: JsNumber? = null
+private val pendingFiles = mutableListOf<FileAttachment>()
+private var formInitialized = false
+private var reconnectDelay = 1000 // ms, doubles on each failure up to 30s
+
+// ---- Entry point ----
+
+fun main() {
+    if (document.body.hasAttribute("data-debug") == true) {
+        installConsoleCapture()
+    }
+    connect()
 }
 
-private fun createCloseHandler(): JsAny {
-    return wrapVoidCallback {
-        updateAgentInfo("Disconnected. Refresh to reconnect.")
+// ---- WebSocket ----
+
+private fun connect() {
+    val protocol = if (location.protocol == "https:") "wss" else "ws"
+    val host = location.host
+    val pathname = location.pathname.trimEnd('/')
+    val url = "$protocol://$host$pathname/ws"
+    val socket = WebSocket(url)
+    ws = socket
+
+    wsOnOpen(socket) {
+        setWsReadyState(1.toJsNumber())
+        reconnectDelay = 1000
+    }
+    wsOnMessage(socket) { data -> onMessage(data.toString()) }
+    wsOnClose(socket) {
+        setWsReadyState(3.toJsNumber())
+        if (reloading) return@wsOnClose
+        val el = byId(Id.AGENT_INFO)
+        if (el != null) el.textContent = "Reconnecting\u2026"
         setInputEnabled(false)
+        stopStatusTimer()
+        val delay = reconnectDelay
+        reconnectDelay = (reconnectDelay * 2).coerceAtMost(30000)
+        setTimeout(delay.toJsNumber()) { connect() }
+    }
+    wsOnError(socket) { }
+
+    if (!formInitialized) {
+        formInitialized = true
+        setupForm()
     }
 }
 
-private fun setupForm() {
-    val form = getElementById("prompt-form".toJsString()) ?: return
-    val input = getElementById("prompt-input".toJsString()) ?: return
-    val handler = wrapVoidCallback {
-        if (agentWorking) {
-            sendCancel()
-        } else {
-            sendPrompt()
+private fun sendWs(msg: WsMessage) {
+    val encoded = json.encodeToString(WsMessage.serializer(), msg)
+    ws?.send(encoded)
+}
+
+// ---- Message handler ----
+
+private fun onMessage(data: String) {
+    val msg = json.decodeFromString(WsMessage.serializer(), data)
+    when (msg) {
+        is WsMessage.Connected -> {
+            val info = buildString {
+                append("${msg.agentName} v${msg.agentVersion}")
+                val cwd = msg.cwd
+                if (cwd != null) append(" \u2014 ${cwd.substringAfterLast('/')}")
+            }
+            val el = byId(Id.AGENT_INFO) ?: return
+            el.textContent = info
+            // Clear messages before server replays history
+            val messages = byId(Css.MESSAGES)
+            if (messages != null) setHtml(messages, "".toJsString())
+            stopStatusTimer()
+            if (msg.agentWorking) {
+                setInputEnabled(false)
+                startStatusTimer()
+            } else {
+                setInputEnabled(true)
+            }
+        }
+        is WsMessage.HtmlUpdate -> applyHtmlUpdate(msg)
+        is WsMessage.TurnComplete -> {
+            stopStatusTimer()
+            setInputEnabled(true)
+            scrollToBottom()
+        }
+        is WsMessage.BrowserStateRequest -> {
+            val state = collectBrowserState(msg.query)
+            sendWs(WsMessage.BrowserStateResponse(msg.requestId, state))
+        }
+        is WsMessage.AgentText -> {}
+        is WsMessage.AgentThought -> {}
+        is WsMessage.ToolCall -> {}
+        is WsMessage.PermissionRequest -> {}
+        is WsMessage.Error -> {}
+        is WsMessage.Prompt -> {}
+        is WsMessage.BrowserStateResponse -> {}
+        is WsMessage.PermissionResponse -> {}
+        is WsMessage.Cancel -> {}
+        is WsMessage.Diagnose -> {}
+    }
+}
+
+private fun applyHtmlUpdate(msg: WsMessage.HtmlUpdate) {
+    when (msg.swap) {
+        Swap.Show -> {
+            val el = byId(msg.target) ?: return
+            rmCls(el, Css.HIDDEN.toJsString())
+        }
+        Swap.Hide -> {
+            val el = byId(msg.target) ?: return
+            addCls(el, Css.HIDDEN.toJsString())
+        }
+        Swap.BeforeEnd -> {
+            val el = byId(msg.target) ?: return
+            insertHtml(el, "beforeend".toJsString(), msg.html.toJsString())
+        }
+        Swap.InnerHTML -> {
+            val el = byId(msg.target) ?: return
+            setHtml(el, msg.html.toJsString())
+        }
+        Swap.Morph -> {
+            val el = getEl(msg.target.toJsString())
+            if (el != null) {
+                morphElement(el, msg.html.toJsString())
+            } else {
+                val messages = byId(Css.MESSAGES) ?: return
+                insertHtml(messages, "beforeend".toJsString(), msg.html.toJsString())
+            }
         }
     }
-    onSubmit(form, handler)
-    onEnterKey(input, handler)
+    // Only auto-scroll and auto-collapse when new content is appended.
+    // Morph updates existing elements in-place — auto-scrolling on morph fights
+    // the user's scroll position (e.g., browsing a tall tool call list).
+    if (msg.swap == Swap.BeforeEnd) {
+        scrollToBottom()
+        autoCollapseOlderBlocks(Css.MESSAGES.toJsString(), Css.COLLAPSED.toJsString())
+    }
+}
 
-    // Attach button triggers hidden file input
-    val attachBtn = getElementById("attach-btn".toJsString())
-    val fileInput = getElementById("file-input".toJsString())
-    if (attachBtn != null && fileInput != null) {
-        onClick(attachBtn, wrapVoidCallback { clickElement(fileInput) })
-        onChange(fileInput, wrapVoidCallback { onFilesSelected(fileInput) })
+// ---- Form setup ----
+
+private fun setupForm() {
+    val form = byId(Id.PROMPT_FORM)?.unsafeCast<HTMLFormElement>() ?: return
+    val input = byId(Id.PROMPT_INPUT)?.unsafeCast<HTMLTextAreaElement>() ?: return
+
+    onSubmit(form) {
+        if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+    }
+    onKeyDown(input) { e ->
+        if (eventKey(e).toString() == "Enter" && !eventShiftKey(e).toBoolean()) {
+            preventDefault(e)
+            if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+        }
     }
 
-    // Drag-and-drop on textarea
+    // Attach button
+    val attachBtn = byId(Id.ATTACH_BTN)?.unsafeCast<HTMLButtonElement>()
+    val fileInput = byId(Id.FILE_INPUT)?.unsafeCast<HTMLInputElement>()
+    if (attachBtn != null && fileInput != null) {
+        onClick(attachBtn) { fileInput.click() }
+        onChange(fileInput) { onFilesSelected(fileInput) }
+    }
+
+    // Drag-and-drop + paste on textarea
     onDrop(input, wrapDropCallback { dt -> onFilesDropped(dt) })
+    onPasteFiles(input, wrapDropCallback { cb -> onFilesDropped(cb) })
 
-    // Paste files on textarea
-    onPasteFiles(input, wrapDropCallback { clipboard -> onFilesDropped(clipboard) })
+    // Debug mode buttons
+    if (document.body.hasAttribute("data-debug") == true) {
+        val diagnoseBtn = byId(Id.DIAGNOSE_BTN)
+        if (diagnoseBtn != null) onClick(diagnoseBtn) { sendWs(WsMessage.Diagnose) }
 
-    if (isDebugMode().toBoolean()) {
-        val diagnoseBtn = getElementById("diagnose-btn".toJsString())
-        if (diagnoseBtn != null) {
-            onClick(diagnoseBtn, wrapVoidCallback { sendDiagnose() })
+        val reloadBtn = byId(Id.RELOAD_BTN)
+        if (reloadBtn != null) onClick(reloadBtn) {
+            val info = byId(Id.AGENT_INFO)
+            if (info != null) info.textContent = "Reloading\u2026"
+            reloading = true
+            postRequest("/reload".toJsString()) {
+                pollUntilHealthy { reloadPage() }
+            }
         }
     }
 
     // Scroll-to-bottom button
-    val scrollBtn = getElementById("scroll-to-bottom-btn".toJsString())
-    if (scrollBtn != null) {
-        onClick(scrollBtn, wrapVoidCallback {
-            val messages = getElementById("messages".toJsString()) ?: return@wrapVoidCallback
-            scrollToBottomSmooth(messages, "smooth".toJsString())
+    val scrollBtn = byId(Id.SCROLL_BTN)
+    if (scrollBtn != null) onClick(scrollBtn) {
+        val messages = byId(Css.MESSAGES) ?: return@onClick
+        scrollToSmooth(messages, messages.scrollHeight.toJsNumber())
+    }
+
+    // Collapse click handler (expand collapsed blocks on click)
+    setupCollapseClickHandler(Css.MESSAGES.toJsString(), Css.COLLAPSED.toJsString())
+
+    // Scroll events
+    val messages = byId(Css.MESSAGES)
+    if (messages != null) onScroll(messages) { updateScrollButtonVisibility() }
+
+    // Permission event delegation
+    val permContent = getEl(Id.PERMISSION_CONTENT.toJsString())
+    if (permContent != null) {
+        onPermissionClick(permContent, wrapTwoStringCallback { toolCallId, optionId ->
+            sendWs(WsMessage.PermissionResponse(toolCallId.toString(), optionId.toString()))
+            val dialog = byId(Id.PERMISSION_DIALOG)
+            if (dialog != null) addCls(dialog, Css.HIDDEN.toJsString())
         })
     }
 
-    // Listen for scroll events on messages to show/hide scroll button
-    val messages = getElementById("messages".toJsString())
-    if (messages != null) {
-        onScroll(messages, wrapVoidCallback { updateScrollButtonVisibility() })
+    // File preview remove event delegation
+    val filePreview = getEl(Id.FILE_PREVIEW.toJsString())
+    if (filePreview != null) {
+        onFileRemoveClick(filePreview, wrapStringCallback { indexStr ->
+            val idx = indexStr.toString().toIntOrNull() ?: return@wrapStringCallback
+            if (idx < pendingFiles.size) {
+                pendingFiles.removeAt(idx)
+                renderFilePreview()
+            }
+        })
     }
 }
 
-private fun sendCancel() {
-    val msg = WsMessage.Cancel
-    val encoded = json.encodeToString(WsMessage.serializer(), msg)
-    ws?.let { wsSend(it, encoded.toJsString()) }
+// ---- Prompt ----
+
+private fun sendPrompt() {
+    val input = byId(Id.PROMPT_INPUT)?.unsafeCast<HTMLTextAreaElement>() ?: return
+    val text = input.value.trim()
+    if (text.isEmpty()) return
+
+    input.value = ""
+    setInputEnabled(false)
+    startStatusTimer()
+
+    val files = pendingFiles.toList()
+    clearFiles()
+
+    val screenshotToggle = byId(Id.SCREENSHOT_TOGGLE)?.unsafeCast<HTMLInputElement>()
+    val wantScreenshot = screenshotToggle?.checked == true
+
+    if (wantScreenshot) {
+        captureScreenshot(wrapStringCallback { base64 ->
+            val screenshot = base64.toString().ifEmpty { null }
+            sendWs(WsMessage.Prompt(text, screenshot, files))
+        })
+    } else {
+        sendWs(WsMessage.Prompt(text, null, files))
+    }
 }
 
-private fun sendDiagnose() {
-    val msg = WsMessage.Diagnose
-    val encoded = json.encodeToString(WsMessage.serializer(), msg)
-    ws?.let { wsSend(it, encoded.toJsString()) }
-}
+// ---- File handling ----
 
-private fun onFilesSelected(fileInput: JsAny) {
-    val count = getFileCount(fileInput).toInt()
-    for (i in 0 until count) {
+private fun onFilesSelected(fileInput: HTMLInputElement) {
+    val fileList = fileInput.files ?: return
+    for (i in 0 until fileList.length) {
         var fileName = ""
         var fileMimeType = ""
         val nameCallback = wrapStringCallback { s ->
@@ -303,7 +604,7 @@ private fun onFilesSelected(fileInput: JsAny) {
         }
         readFileAt(fileInput, i.toJsNumber(), nameCallback, dataCallback)
     }
-    resetFileInput(fileInput)
+    fileInput.value = ""
 }
 
 private fun onFilesDropped(dt: JsAny) {
@@ -324,381 +625,90 @@ private fun onFilesDropped(dt: JsAny) {
 }
 
 private fun renderFilePreview() {
-    val preview = getElementById("file-preview".toJsString()) ?: return
-    setInnerHTML(preview, "".toJsString())
-
+    val preview = byId(Id.FILE_PREVIEW) ?: return
     if (pendingFiles.isEmpty()) {
-        classListAdd(preview, "hidden".toJsString())
+        setHtml(preview, "".toJsString())
+        addCls(preview, Css.HIDDEN.toJsString())
         return
     }
-    classListRemove(preview, "hidden".toJsString())
-
-    for ((index, file) in pendingFiles.withIndex()) {
-        val chip = createElement("div".toJsString())
-        setClassName(chip, "flex items-center gap-1.5 bg-gray-700 text-gray-300 text-sm px-3 py-1 rounded-lg border border-gray-600".toJsString())
-
-        val nameSpan = createElement("span".toJsString())
-        setTextContent(nameSpan, file.name.toJsString())
-        appendChild(chip, nameSpan)
-
-        val removeBtn = createElement("button".toJsString())
-        setClassName(removeBtn, "text-gray-400 hover:text-white font-bold ml-1".toJsString())
-        setTextContent(removeBtn, "\u00d7".toJsString())
-        val idx = index
-        onClick(removeBtn, wrapVoidCallback {
-            if (idx < pendingFiles.size) {
-                pendingFiles.removeAt(idx)
-                renderFilePreview()
-            }
-        })
-        appendChild(chip, removeBtn)
-        appendChild(preview, chip)
-    }
+    rmCls(preview, Css.HIDDEN.toJsString())
+    setHtml(preview, filePreviewHtml(pendingFiles.map { it.name }).toJsString())
 }
 
 private fun clearFiles() {
     pendingFiles.clear()
-    val preview = getElementById("file-preview".toJsString()) ?: return
-    setInnerHTML(preview, "".toJsString())
-    classListAdd(preview, "hidden".toJsString())
+    val preview = byId(Id.FILE_PREVIEW) ?: return
+    setHtml(preview, "".toJsString())
+    addCls(preview, Css.HIDDEN.toJsString())
 }
 
-private fun sendPrompt() {
-    val input = getElementById("prompt-input".toJsString()) ?: return
-    val text = getValue(input).toString().trim()
-    if (text.isEmpty()) return
-
-    setValue(input, "".toJsString())
-    createMessageDiv("user", text)
-    currentAssistantDiv = null
-    currentThoughtDiv = null
-    setInputEnabled(false)
-    startStatusTimer()
-
-    val files = pendingFiles.toList()
-    clearFiles()
-
-    val screenshotToggle = getElementById("screenshot-toggle".toJsString())
-    if (screenshotToggle != null && isChecked(screenshotToggle).toBoolean()) {
-        captureScreenshot(wrapScreenshotCallback { screenshotData ->
-            val screenshot = screenshotData.toString().ifEmpty { null }
-            val msg = WsMessage.Prompt(text, screenshot, files)
-            val encoded = json.encodeToString(WsMessage.serializer(), msg)
-            ws?.let { wsSend(it, encoded.toJsString()) }
-        })
-    } else {
-        val msg = WsMessage.Prompt(text, files = files)
-        val encoded = json.encodeToString(WsMessage.serializer(), msg)
-        ws?.let { wsSend(it, encoded.toJsString()) }
-    }
-}
-
-private fun onMessage(data: String) {
-    val msg = json.decodeFromString(WsMessage.serializer(), data)
-    when (msg) {
-        is WsMessage.Connected -> {
-            val info = buildString {
-                append("${msg.agentName} v${msg.agentVersion}")
-                val cwd = msg.cwd
-                if (cwd != null) append(" — ${cwd.substringAfterLast('/')}")
-            }
-            updateAgentInfo(info)
-            setInputEnabled(true)
-        }
-        is WsMessage.AgentText -> {
-            if (currentAssistantDiv == null) {
-                currentAssistantDiv = createMessageDiv("assistant")
-            }
-            appendToDiv(currentAssistantDiv!!, msg.text)
-            if (taskStartTime != 0.0) {
-                currentActivity = "Writing"
-                updateStatusDisplay()
-            }
-        }
-        is WsMessage.AgentThought -> {
-            if (currentThoughtDiv == null) {
-                currentThoughtDiv = createThoughtDiv()
-            }
-            appendToDiv(currentThoughtDiv!!, msg.text)
-            if (taskStartTime != 0.0) {
-                currentActivity = "Thinking"
-                updateStatusDisplay()
-            }
-        }
-        is WsMessage.ToolCall -> {
-            showToolCall(msg.toolCallId, msg.title, msg.status)
-            if (taskStartTime != 0.0 && msg.title.isNotEmpty()) {
-                currentActivity = when (msg.status) {
-                    "completed", "failed" -> "Thinking"
-                    else -> msg.title
-                }
-                updateStatusDisplay()
-            }
-        }
-        is WsMessage.PermissionRequest -> {
-            showPermissionDialog(msg.toolCallId, msg.title, msg.options)
-        }
-        is WsMessage.TurnComplete -> {
-            val html = msg.renderedHtml
-            if (html != null && currentAssistantDiv != null) {
-                setInnerHTML(currentAssistantDiv!!, html.toJsString())
-            }
-            currentAssistantDiv = null
-            currentThoughtDiv = null
-            stopStatusTimer()
-            setInputEnabled(true)
-            scrollToBottom()
-        }
-        is WsMessage.Error -> {
-            createMessageDiv("error", msg.message)
-            stopStatusTimer()
-            setInputEnabled(true)
-        }
-        is WsMessage.Prompt -> {
-            createMessageDiv("user", msg.text)
-        }
-        is WsMessage.PermissionResponse -> {}
-        is WsMessage.Cancel -> {}
-        is WsMessage.Diagnose -> {}
-    }
-}
-
-private fun createMessageDiv(role: String, text: String? = null): JsAny {
-    val messages = getElementById("messages".toJsString()) ?: error("messages div not found")
-    val wrapper = createElement("div".toJsString())
-    val alignClass = when (role) {
-        "user" -> "flex justify-end"
-        "error" -> "flex justify-center"
-        else -> "flex justify-start"
-    }
-    setClassName(wrapper, alignClass.toJsString())
-
-    val bubble = createElement("div".toJsString())
-    val bubbleClass = when (role) {
-        "user" -> "bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2 max-w-[80%] whitespace-pre-wrap"
-        "error" -> "bg-red-900/50 text-red-300 rounded-xl px-4 py-2 max-w-[80%]"
-        else -> "bg-gray-700 text-gray-100 rounded-2xl rounded-bl-md px-4 py-2 max-w-[80%] message-content whitespace-pre-wrap"
-    }
-    setClassName(bubble, bubbleClass.toJsString())
-    if (text != null) {
-        setTextContent(bubble, text.toJsString())
-    }
-
-    appendChild(wrapper, bubble)
-    appendChild(messages, wrapper)
-    ensureStatusAtBottom()
-    scrollToBottom()
-    return bubble
-}
-
-private fun createThoughtDiv(): JsAny {
-    val messages = getElementById("messages".toJsString()) ?: error("messages div not found")
-    val wrapper = createElement("div".toJsString())
-    setClassName(wrapper, "flex justify-start".toJsString())
-
-    val bubble = createElement("div".toJsString())
-    setClassName(bubble, "bg-gray-800 text-gray-400 italic rounded-xl px-4 py-2 max-w-[80%] text-sm border border-gray-700 whitespace-pre-wrap".toJsString())
-    appendChild(wrapper, bubble)
-    appendChild(messages, wrapper)
-    ensureStatusAtBottom()
-    return bubble
-}
-
-private fun appendToDiv(div: JsAny, text: String) {
-    val current = getTextContent(div).toString()
-    setTextContent(div, (current + text).toJsString())
-    scrollToBottom()
-}
-
-private fun showToolCall(toolCallId: String, title: String, status: String) {
-    if (title.isEmpty()) return
-
-    val existingId = "tool-$toolCallId"
-    var indicator = getElementById(existingId.toJsString())
-    if (indicator == null) {
-        if (status == "completed") return
-        val messages = getElementById("messages".toJsString()) ?: return
-        val wrapper = createElement("div".toJsString())
-        setClassName(wrapper, "flex justify-start".toJsString())
-        setId(wrapper, "tool-wrap-$toolCallId".toJsString())
-
-        indicator = createElement("div".toJsString())
-        setId(indicator, existingId.toJsString())
-        appendChild(wrapper, indicator)
-        appendChild(messages, wrapper)
-        ensureStatusAtBottom()
-    }
-
-    when (status) {
-        "completed" -> {
-            val wrapper = getElementById("tool-wrap-$toolCallId".toJsString())
-            if (wrapper != null) {
-                setClassName(wrapper, "hidden".toJsString())
-            }
-        }
-        "failed" -> {
-            setClassName(indicator, "bg-red-900/30 text-red-400 rounded-lg px-3 py-1.5 text-sm border border-red-800".toJsString())
-            setTextContent(indicator, "Failed: $title".toJsString())
-        }
-        else -> {
-            setClassName(indicator, "bg-gray-800 text-gray-400 rounded-lg px-3 py-1.5 text-sm border border-gray-700 animate-pulse".toJsString())
-            setTextContent(indicator, title.toJsString())
-        }
-    }
-    scrollToBottom()
-}
-
-private fun showPermissionDialog(
-    toolCallId: String,
-    title: String,
-    options: List<PermissionOptionInfo>,
-) {
-    permissionQueue.addLast(QueuedPermission(toolCallId, title, options))
-    if (!permissionDialogVisible) {
-        showNextPermission()
-    }
-}
-
-private fun showNextPermission() {
-    val queued = permissionQueue.removeFirstOrNull()
-    if (queued == null) {
-        permissionDialogVisible = false
-        val dialog = getElementById("permission-dialog".toJsString()) ?: return
-        classListAdd(dialog, "hidden".toJsString())
-        return
-    }
-
-    permissionDialogVisible = true
-    val dialog = getElementById("permission-dialog".toJsString()) ?: return
-    val content = getElementById("permission-content".toJsString()) ?: return
-
-    setInnerHTML(content, "".toJsString())
-
-    val heading = createElement("h3".toJsString())
-    setClassName(heading, "text-lg font-semibold mb-2".toJsString())
-    setTextContent(heading, "Permission Required".toJsString())
-    appendChild(content, heading)
-
-    val desc = createElement("p".toJsString())
-    setClassName(desc, "text-gray-300 mb-4 break-all".toJsString())
-    setTextContent(desc, queued.title.toJsString())
-    appendChild(content, desc)
-
-    val btnContainer = createElement("div".toJsString())
-    setClassName(btnContainer, "flex flex-wrap gap-2".toJsString())
-
-    for (opt in queued.options) {
-        val btn = createElement("button".toJsString())
-        val btnClass = if (opt.kind.startsWith("allow")) {
-            "bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium"
-        } else {
-            "bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium"
-        }
-        setClassName(btn, btnClass.toJsString())
-        setTextContent(btn, opt.name.toJsString())
-
-        val optionId = opt.optionId
-        val tcId = queued.toolCallId
-        onClick(btn, wrapVoidCallback {
-            val response = WsMessage.PermissionResponse(tcId, optionId)
-            val encoded = json.encodeToString(WsMessage.serializer(), response)
-            ws?.let { wsSend(it, encoded.toJsString()) }
-            showNextPermission()
-        })
-        appendChild(btnContainer, btn)
-    }
-
-    appendChild(content, btnContainer)
-    classListRemove(dialog, "hidden".toJsString())
-}
-
-private fun updateAgentInfo(text: String) {
-    val el = getElementById("agent-info".toJsString()) ?: return
-    setTextContent(el, text.toJsString())
-}
-
-private var agentWorking = false
+// ---- Input state ----
 
 private fun setInputEnabled(enabled: Boolean) {
-    val input = getElementById("prompt-input".toJsString()) ?: return
-    val btn = getElementById("send-btn".toJsString()) ?: return
-    val diagnoseBtn = getElementById("diagnose-btn".toJsString())
-    setDisabled(input, (!enabled).toJsBoolean())
+    val input = byId(Id.PROMPT_INPUT)?.unsafeCast<HTMLTextAreaElement>() ?: return
+    val btn = byId(Id.SEND_BTN)?.unsafeCast<HTMLButtonElement>() ?: return
+    val diagnoseBtn = byId(Id.DIAGNOSE_BTN)
+    input.disabled = !enabled
     agentWorking = !enabled
     if (enabled) {
-        setTextContent(btn, "Send".toJsString())
-        setClassName(btn, "bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed".toJsString())
-        setDisabled(btn, false.toJsBoolean())
-        diagnoseBtn?.let { classListAdd(it, "hidden".toJsString()) }
-        focus(input)
-        currentThoughtDiv = null
+        btn.textContent = "Send"
+        setCls(btn, Css.SEND_BTN.toJsString())
+        btn.disabled = false
+        if (diagnoseBtn != null) addCls(diagnoseBtn, Css.HIDDEN.toJsString())
+        input.focus()
     } else {
-        setTextContent(btn, "Cancel".toJsString())
-        setClassName(btn, "bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl font-medium".toJsString())
-        setDisabled(btn, false.toJsBoolean())
-        diagnoseBtn?.let { classListRemove(it, "hidden".toJsString()) }
+        btn.textContent = "Cancel"
+        setCls(btn, "${Css.SEND_BTN} ${Css.SEND_BTN_CANCEL}".toJsString())
+        btn.disabled = false
+        if (diagnoseBtn != null) rmCls(diagnoseBtn, Css.HIDDEN.toJsString())
     }
+}
+
+// ---- Status timer ----
+
+private fun formatElapsed(ms: Double): String {
+    val totalSeconds = (ms / 1000).toInt()
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
+}
+
+private fun updateStatusTimerText() {
+    val el = byId(Id.TASK_STATUS) ?: return
+    val elapsed = dateNow().toDouble() - taskStartTime
+    el.unsafeCast<HTMLElement>().textContent = "Thinking \u00b7 ${formatElapsed(elapsed)}"
 }
 
 private fun startStatusTimer() {
     stopStatusTimer()
     taskStartTime = dateNow().toDouble()
-    currentActivity = "Thinking"
-
-    // Create inline status element in messages area
-    val messages = getElementById("messages".toJsString()) ?: return
-    val wrapper = createElement("div".toJsString())
-    setClassName(wrapper, "flex justify-start".toJsString())
-    setId(wrapper, "task-status-wrap".toJsString())
-    val indicator = createElement("div".toJsString())
-    setId(indicator, "task-status".toJsString())
-    setClassName(indicator, "text-gray-400 text-sm py-1".toJsString())
-    appendChild(wrapper, indicator)
-    appendChild(messages, wrapper)
-
-    updateStatusDisplay()
-    statusTimerId = jsSetInterval(wrapVoidCallback { updateStatusDisplay() }, 1000.toJsNumber())
+    val wrap = byId(Id.TASK_STATUS_WRAP) ?: return
+    rmCls(wrap, Css.HIDDEN.toJsString())
+    updateStatusTimerText()
+    timerIntervalId = jsSetInterval(::updateStatusTimerText, 1000.toJsNumber())
 }
 
 private fun stopStatusTimer() {
-    statusTimerId?.let { jsClearInterval(it) }
-    statusTimerId = null
     taskStartTime = 0.0
-    val wrapper = getElementById("task-status-wrap".toJsString()) ?: return
-    setClassName(wrapper, "hidden".toJsString())
+    val id = timerIntervalId
+    if (id != null) {
+        jsClearInterval(id)
+        timerIntervalId = null
+    }
+    val wrap = byId(Id.TASK_STATUS_WRAP) ?: return
+    addCls(wrap, Css.HIDDEN.toJsString())
 }
 
-private fun updateStatusDisplay() {
-    val statusEl = getElementById("task-status".toJsString()) ?: return
-    if (taskStartTime == 0.0) return
-    val elapsed = ((dateNow().toDouble() - taskStartTime) / 1000).toInt()
-    val timeStr = if (elapsed < 60) "${elapsed}s" else "${elapsed / 60}m ${elapsed % 60}s"
-    setTextContent(statusEl, "$currentActivity \u00b7 $timeStr".toJsString())
-    scrollToBottom()
-}
-
-private fun ensureStatusAtBottom() {
-    val messages = getElementById("messages".toJsString()) ?: return
-    val wrapper = getElementById("task-status-wrap".toJsString()) ?: return
-    removeChild(messages, wrapper)
-    appendChild(messages, wrapper)
-}
+// ---- Scroll management ----
 
 private fun isNearBottom(): Boolean {
-    val messages = getElementById("messages".toJsString()) ?: return true
-    val scrollTop = getScrollTop(messages).toDouble()
-    val clientHeight = getClientHeight(messages).toDouble()
-    val scrollHeight = getScrollHeight(messages).toDouble()
-    return scrollHeight - scrollTop - clientHeight < 100
+    val messages = byId(Css.MESSAGES) ?: return true
+    return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100
 }
 
 private fun updateScrollButtonVisibility() {
-    val btn = getElementById("scroll-to-bottom-btn".toJsString()) ?: return
-    if (isNearBottom()) {
-        classListAdd(btn, "hidden".toJsString())
-    } else {
-        classListRemove(btn, "hidden".toJsString())
-    }
+    val btn = byId(Id.SCROLL_BTN) ?: return
+    if (isNearBottom()) addCls(btn, Css.HIDDEN.toJsString()) else rmCls(btn, Css.HIDDEN.toJsString())
 }
 
 private fun scrollToBottom() {
@@ -706,7 +716,25 @@ private fun scrollToBottom() {
         updateScrollButtonVisibility()
         return
     }
-    val messages = getElementById("messages".toJsString()) ?: return
-    val height = getScrollHeight(messages)
-    setScrollTop(messages, height)
+    val messages = byId(Css.MESSAGES) ?: return
+    messages.scrollTop = messages.scrollHeight.toDouble()
+}
+
+// ---- Browser state (debug) ----
+
+private fun collectBrowserState(query: String): String {
+    return when {
+        query == "console" -> getConsoleLogs().toString()
+        query == "dom" -> getDomState().toString()
+        query == "all" -> {
+            val console = getConsoleLogs().toString()
+            val dom = getDomState().toString()
+            """{"console":$console,"dom":$dom}"""
+        }
+        query.startsWith("inspect:") -> {
+            val selector = query.removePrefix("inspect:")
+            inspectElements(selector.toJsString()).toString()
+        }
+        else -> """{"error":"unknown query: $query"}"""
+    }
 }

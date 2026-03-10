@@ -5,7 +5,7 @@
         </encoder>
     </appender>
 
-    <logger name="com.agentclientprotocol" level="DEBUG"/>
+    <logger name="com.agentclientprotocol" level="INFO"/>
     <logger name="com.jamesward.acpgateway" level="DEBUG"/>
 
     <root level="INFO">

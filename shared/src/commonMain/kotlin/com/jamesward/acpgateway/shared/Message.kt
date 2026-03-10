@@ -28,6 +28,7 @@ sealed class WsMessage {
         val toolCallId: String,
         val title: String,
         val status: String,
+        val content: String? = null,
     ) : WsMessage()
 
     @Serializable
@@ -62,6 +63,7 @@ sealed class WsMessage {
         val agentName: String,
         val agentVersion: String,
         val cwd: String? = null,
+        val agentWorking: Boolean = false,
     ) : WsMessage()
 
     @Serializable
@@ -71,6 +73,31 @@ sealed class WsMessage {
     @Serializable
     @SerialName("diagnose")
     data object Diagnose : WsMessage()
+
+    @Serializable
+    @SerialName("html_update")
+    data class HtmlUpdate(
+        val target: String,
+        val swap: Swap,
+        val html: String,
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("browser_state_request")
+    data class BrowserStateRequest(val requestId: String, val query: String = "all") : WsMessage()
+
+    @Serializable
+    @SerialName("browser_state_response")
+    data class BrowserStateResponse(val requestId: String, val state: String) : WsMessage()
+}
+
+@Serializable
+enum class Swap {
+    @SerialName("morph") Morph,
+    @SerialName("beforeend") BeforeEnd,
+    @SerialName("innerHTML") InnerHTML,
+    @SerialName("show") Show,
+    @SerialName("hide") Hide,
 }
 
 @Serializable
