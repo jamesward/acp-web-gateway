@@ -25,7 +25,7 @@ private val json = Json { ignoreUnknownKeys = true }
 
 class Acp2Web : CliktCommand(name = "acp2web") {
     val agent by option("--agent", help = "Agent ID from the ACP registry")
-    val gateway by option("--gateway", help = "Gateway server URL").default("http://localhost:8080")
+    val gateway by option("--gateway", help = "Gateway server URL").default("https://www.acp2web.com")
 
     override fun run() {
         runBlocking {
@@ -65,6 +65,7 @@ class Acp2Web : CliktCommand(name = "acp2web") {
                     }
 
                     val wsUrl = if (currentAgentId != null) "$wsBase?agent=$currentAgentId" else wsBase
+                    var justSelectedAgent = false
 
                     try {
                         httpClient.webSocket(urlString = wsUrl) {
@@ -77,6 +78,7 @@ class Acp2Web : CliktCommand(name = "acp2web") {
                                 currentManager = startAgent(selectedAgentId, registry, workingDir)
                                 echo("Agent: ${currentManager!!.agentName} ${currentManager!!.agentVersion}")
                                 // Reconnect with the agent query param so the server knows
+                                justSelectedAgent = true
                                 return@webSocket
                             }
 
@@ -89,11 +91,10 @@ class Acp2Web : CliktCommand(name = "acp2web") {
                             }
                         }
 
-                        // Normal WebSocket close — check if we need to reconnect with new agent
-                        if (currentManager != null && currentAgentId != null) {
-                            break // Normal exit
-                        }
-                        // Otherwise loop to reconnect (e.g., after initial agent selection)
+                        // After initial agent selection, loop to reconnect with agent query param
+                        if (justSelectedAgent) continue
+                        // Normal WebSocket close — exit
+                        break
                     } catch (e: AgentSwitchException) {
                         echo("Switching to agent: ${e.agentId}")
                         currentManager?.close()

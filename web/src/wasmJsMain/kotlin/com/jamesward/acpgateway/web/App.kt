@@ -209,6 +209,39 @@ private external fun getDomState(): JsString
 @JsFun("(v) => { window.__acpWsReadyState = v; }")
 private external fun setWsReadyState(v: JsNumber)
 
+// Update header with agent icon and swap button after agent selection (relay mode)
+@JsFun("""(agentId, iconCls, swapBtnCls, swapBtnId) => {
+    var header = document.querySelector('.header');
+    if (!header) return;
+    var infoEl = document.getElementById('agent-info');
+    if (!infoEl) return;
+    // Add icon if missing
+    if (!header.querySelector('.' + iconCls)) {
+        var row = document.querySelector('[data-agent-id="' + agentId + '"]');
+        if (row) {
+            var rowIcon = row.querySelector('img');
+            if (rowIcon) {
+                var img = document.createElement('img');
+                img.className = iconCls;
+                img.src = rowIcon.src;
+                img.alt = rowIcon.alt || '';
+                header.insertBefore(img, infoEl);
+            }
+        }
+    }
+    // Add swap button if missing
+    if (!document.getElementById(swapBtnId)) {
+        var btn = document.createElement('button');
+        btn.className = swapBtnCls;
+        btn.id = swapBtnId;
+        btn.type = 'button';
+        btn.title = 'Switch agent';
+        btn.textContent = '\u21C4';
+        infoEl.insertAdjacentElement('afterend', btn);
+    }
+}""")
+private external fun updateHeaderAgent(agentId: JsString, iconCls: JsString, swapBtnCls: JsString, swapBtnId: JsString)
+
 @JsFun("(ms, callback) => setTimeout(callback, ms)")
 private external fun setTimeout(ms: JsNumber, callback: () -> Unit)
 
@@ -498,6 +531,29 @@ private fun onMessage(data: String) {
                 if (cwdEl != null) {
                     cwdEl.textContent = cwd
                     rmCls(cwdEl, Css.HIDDEN.toJsString())
+                }
+            }
+
+            // Update header with icon + swap button if agent was selected dynamically
+            val agentId = document.body.getAttribute("data-agent-id")
+            if (agentId != null) {
+                updateHeaderAgent(
+                    agentId.toJsString(),
+                    Css.AGENT_ICON_SM.toJsString(),
+                    Css.AGENT_SWAP_BTN_CLS.toJsString(),
+                    Id.AGENT_SWAP_BTN.toJsString(),
+                )
+                // Wire up swap button if it was just created
+                val newSwapBtn = getEl(Id.AGENT_SWAP_BTN.toJsString())
+                if (newSwapBtn != null) {
+                    onClick(newSwapBtn) {
+                        val m = byId(Id.AGENT_MODAL) ?: return@onClick
+                        if (hasCls(m, Css.HIDDEN.toJsString()).toBoolean()) {
+                            rmCls(m, Css.HIDDEN.toJsString())
+                        } else {
+                            addCls(m, Css.HIDDEN.toJsString())
+                        }
+                    }
                 }
             }
 
@@ -960,17 +1016,30 @@ private fun changeAgent(agentId: String) {
     val modal = byId(Id.AGENT_MODAL)
     if (modal != null) addCls(modal, Css.HIDDEN.toJsString())
 
-    // Close existing WebSocket
-    ws?.close()
-    ws = null
+    // In relay mode (URL has /s/{sessionId}), keep the WebSocket open.
+    // The relay server keeps our connection alive during the switch, and the
+    // CLI will send a new Connected message when the new agent is ready.
+    // The Connected handler already hides the loading overlay.
+    val isRelay = location.pathname.startsWith("/s/")
+
+    if (!isRelay) {
+        // Local mode: close WS, we'll reload to get fresh state
+        ws?.close()
+        ws = null
+    }
 
     // POST to server to switch agent
     val body = """{"agentId":"$agentId"}"""
     val apiPath = "${location.pathname.trimEnd('/')}/api/change-agent"
     postJsonRequest(apiPath.toJsString(), body.toJsString(), wrapStringCallback { result ->
         if (result.toString().startsWith("ok")) {
-            // Reload page to get fresh state with new agent
-            reloadPage()
+            if (isRelay) {
+                // Relay mode: update agent ID on body, wait for Connected message
+                document.body.setAttribute("data-agent-id", agentId)
+            } else {
+                // Local mode: reload page to get fresh state with new agent
+                reloadPage()
+            }
         } else {
             // Error - hide loading, show modal again
             switchingAgent = false

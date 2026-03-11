@@ -322,6 +322,7 @@ fun Application.module(
                     if (backend != null) {
                         relay.switchInProgress = true
                         relay.agentId = request.agentId
+                        relay.messageCache.clear()
                         val msg = apiJson.encodeToString(WsMessage.serializer(), WsMessage.ChangeAgent(request.agentId))
                         backend.send(Frame.Text(msg))
                         call.respondText("ok", ContentType.Text.Plain)
