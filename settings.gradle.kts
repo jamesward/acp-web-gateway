@@ -1,3 +1,10 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
 rootProject.name = "acp-web-gateway"
 
 include("shared", "server", "web", "cli")
@@ -6,6 +13,7 @@ dependencyResolutionManagement {
     @Suppress("UnstableApiUsage")
     repositories {
         mavenCentral()
+        google()
     }
 }
 

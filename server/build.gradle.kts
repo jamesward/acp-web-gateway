@@ -14,6 +14,7 @@ application {
 }
 
 val ktorVersion = "3.4.1"
+val kiluaRpcVersion = "0.0.42"
 
 dependencies {
     implementation(project(":shared"))
@@ -23,13 +24,13 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
     implementation("io.ktor:ktor-server-websockets:$ktorVersion")
     implementation("io.ktor:ktor-server-html-builder:$ktorVersion")
+    implementation("dev.kilua:kilua-rpc-ktor-jvm:$kiluaRpcVersion")
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
     testImplementation("io.ktor:ktor-client-cio:$ktorVersion")
     testImplementation("io.ktor:ktor-client-websockets:$ktorVersion")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.orange-buffalo:testcontainers-playwright:0.12.0")
-    testImplementation("org.commonmark:commonmark:0.27.1")
 }
 
 tasks.test {

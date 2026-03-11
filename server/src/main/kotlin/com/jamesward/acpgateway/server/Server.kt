@@ -9,6 +9,9 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import com.jamesward.acpgateway.shared.*
+import dev.kilua.rpc.applyRoutes
+import dev.kilua.rpc.initRpc
+import dev.kilua.rpc.registerService
 import io.ktor.server.routing.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
@@ -19,8 +22,6 @@ import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -94,11 +95,6 @@ class AgentHolder(
     }
 }
 
-@Serializable
-data class ChangeAgentRequest(val agentId: String)
-
-private val apiJson = Json { ignoreUnknownKeys = true }
-
 fun Application.module(
     holder: AgentHolder,
     mode: GatewayMode,
@@ -108,13 +104,19 @@ fun Application.module(
     commandHandler: CommandHandler? = null,
     internalCommands: List<CommandInfo> = emptyList(),
 ) {
-    install(ContentNegotiation) {
-        json()
-    }
     install(WebSockets) {
         pingPeriod = 15.seconds
         timeout = 15.seconds
         maxFrameSize = Long.MAX_VALUE
+    }
+
+    initRpc {
+        registerService<IChatService> { call, _ ->
+            val sessionId = call.parameters["sessionId"]?.let {
+                try { UUID.fromString(it) } catch (_: Exception) { null }
+            }
+            ChatServiceImpl(holder, mode, debug, commandHandler, internalCommands, sessionId)
+        }
     }
 
     val relaySessions = ConcurrentHashMap<UUID, RelaySession>()
@@ -129,25 +131,11 @@ fun Application.module(
                             agentName = agentName,
                             debug = debug,
                             dev = dev,
-                            agents = holder.registry,
-                            currentAgentId = holder.currentAgentId,
                         )
                     }
                 }
 
-                webSocket("/ws") {
-                    val manager = holder.manager
-                    if (manager == null) {
-                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No agent selected"))
-                        return@webSocket
-                    }
-                    val session = manager.sessions.values.firstOrNull()
-                    if (session == null) {
-                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No session available"))
-                        return@webSocket
-                    }
-                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler, internalCommands = internalCommands)
-                }
+                applyRoutes(ChatServiceManager)
             }
 
             GatewayMode.PROXY -> {
@@ -175,7 +163,6 @@ fun Application.module(
                         return@get
                     }
                     val relayAgentId = if (hasRelaySession) relaySessions[sessionId]?.agentId else null
-                    val effectiveAgentId = relayAgentId ?: holder.currentAgentId
                     val agentName = if (relayAgentId != null) {
                         holder.registry.find { it.id == relayAgentId }?.name ?: relayAgentId
                     } else {
@@ -184,12 +171,8 @@ fun Application.module(
                     call.respondHtml(HttpStatusCode.OK) {
                         chatPage(
                             agentName = agentName,
-                            sessionId = sessionId,
                             debug = debug,
                             dev = dev,
-                            agents = holder.registry,
-                            currentAgentId = effectiveAgentId,
-                            canSwapAgent = true,
                         )
                     }
                 }
@@ -242,105 +225,52 @@ fun Application.module(
                     }
                 }
 
+                // Browser relay WS (for relay sessions only)
                 webSocket("/s/{sessionId}/ws") {
                     val sessionId = call.parameters["sessionId"]?.let {
                         try { UUID.fromString(it) } catch (_: Exception) { null }
                     }
 
-                    // Check for relay session first
                     val relay = sessionId?.let { relaySessions[it] }
-                    if (relay != null) {
-                        relay.frontendConnections.add(this)
-                        logger.info("Browser connected to relay session {}", sessionId)
+                    if (relay == null) {
+                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Use RPC endpoint"))
+                        return@webSocket
+                    }
 
-                        // Replay cached messages so the browser gets full state
-                        for (cachedMsg in relay.messageCache) {
-                            try {
-                                send(Frame.Text(cachedMsg))
-                            } catch (_: Exception) {
-                                break
-                            }
-                        }
+                    relay.frontendConnections.add(this)
+                    logger.info("Browser connected to relay session {}", sessionId)
 
+                    // Replay cached messages so the browser gets full state
+                    for (cachedMsg in relay.messageCache) {
                         try {
-                            incoming.consumeEach { frame ->
-                                if (frame is Frame.Text) {
-                                    val backend = relay.backendWs
-                                    if (backend != null) {
-                                        try {
-                                            backend.send(Frame.Text(frame.readText()))
-                                        } catch (_: Exception) {}
-                                    }
+                            send(Frame.Text(cachedMsg))
+                        } catch (_: Exception) {
+                            break
+                        }
+                    }
+
+                    try {
+                        incoming.consumeEach { frame ->
+                            if (frame is Frame.Text) {
+                                val backend = relay.backendWs
+                                if (backend != null) {
+                                    try {
+                                        backend.send(Frame.Text(frame.readText()))
+                                    } catch (_: Exception) {}
                                 }
                             }
-                        } finally {
-                            relay.frontendConnections.remove(this)
-                            logger.info("Browser disconnected from relay session {}", sessionId)
                         }
-                        return@webSocket
+                    } finally {
+                        relay.frontendConnections.remove(this)
+                        logger.info("Browser disconnected from relay session {}", sessionId)
                     }
+                }
 
-                    // Normal proxy mode: use handleChatWebSocket
-                    val manager = holder.manager ?: run {
-                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No agent selected"))
-                        return@webSocket
-                    }
-                    val session = sessionId?.let { manager.getSession(it) }
-                    if (session == null) {
-                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Session not found"))
-                        return@webSocket
-                    }
-                    handleChatWebSocket(session, manager, debug = debug, commandHandler = commandHandler, internalCommands = internalCommands)
+                // Kilua RPC for direct browser connections
+                route("/s/{sessionId}") {
+                    applyRoutes(ChatServiceManager)
                 }
             }
-        }
-
-        post("/api/change-agent") {
-            try {
-                val body = call.receiveText()
-                val request = apiJson.decodeFromString(ChangeAgentRequest.serializer(), body)
-                holder.switchAgent(request.agentId)
-                call.respondText("ok", ContentType.Text.Plain)
-            } catch (e: Exception) {
-                logger.error("Failed to change agent", e)
-                call.respondText(e.message ?: "Unknown error", ContentType.Text.Plain, HttpStatusCode.InternalServerError)
-            }
-        }
-
-        post("/s/{sessionId}/api/change-agent") {
-            try {
-                val sessionId = call.parameters["sessionId"]?.let {
-                    try { UUID.fromString(it) } catch (_: Exception) { null }
-                }
-                val body = call.receiveText()
-                val request = apiJson.decodeFromString(ChangeAgentRequest.serializer(), body)
-
-                // For relay sessions, forward ChangeAgent to CLI backend
-                val relay = sessionId?.let { relaySessions[it] }
-                if (relay != null) {
-                    val backend = relay.backendWs
-                    if (backend != null) {
-                        relay.switchInProgress = true
-                        relay.agentId = request.agentId
-                        relay.messageCache.clear()
-                        val msg = apiJson.encodeToString(WsMessage.serializer(), WsMessage.ChangeAgent(request.agentId))
-                        backend.send(Frame.Text(msg))
-                        call.respondText("ok", ContentType.Text.Plain)
-                    } else {
-                        call.respondText("CLI backend not connected", ContentType.Text.Plain, HttpStatusCode.ServiceUnavailable)
-                    }
-                } else {
-                    holder.switchAgent(request.agentId)
-                    call.respondText("ok", ContentType.Text.Plain)
-                }
-            } catch (e: Exception) {
-                logger.error("Failed to change agent", e)
-                call.respondText(e.message ?: "Unknown error", ContentType.Text.Plain, HttpStatusCode.InternalServerError)
-            }
-        }
-
-        get("/styles.css") {
-            call.respondText(appStylesheet(), ContentType.Text.CSS)
         }
 
         get("/health") {

@@ -337,16 +337,17 @@ class AgentIntegrationTest {
                 send(Frame.Text(json.encodeToString(WsMessage.serializer(), prompt)))
 
                 // Collect until TurnComplete
-                // Server sends HtmlUpdate messages (not AgentText) for all content.
+                // Server sends structured messages (AgentText, ToolCall, etc.).
                 // Permissions are auto-approved by the companion's approveJob at the SDK level.
-                var gotHtmlUpdate = false
+                var gotAgentMessage = false
                 var gotTurnComplete = false
                 withTimeout(120_000) {
                     for (frame in incoming) {
                         if (frame is Frame.Text) {
                             val msg = json.decodeFromString(WsMessage.serializer(), frame.readText())
                             when (msg) {
-                                is WsMessage.HtmlUpdate -> gotHtmlUpdate = true
+                                is WsMessage.AgentText -> gotAgentMessage = true
+                                is WsMessage.ToolCall -> gotAgentMessage = true
                                 is WsMessage.TurnComplete -> {
                                     gotTurnComplete = true
                                     break
@@ -357,7 +358,7 @@ class AgentIntegrationTest {
                     }
                 }
                 assertTrue(gotTurnComplete, "Should receive TurnComplete")
-                assertTrue(gotHtmlUpdate, "Agent should produce HTML updates")
+                assertTrue(gotAgentMessage, "Agent should produce messages")
             }
         }
     }

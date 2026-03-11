@@ -10,13 +10,13 @@ import com.agentclientprotocol.model.*
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.transport.StdioTransport
 import com.jamesward.acpgateway.shared.*
-import io.ktor.websocket.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -49,11 +49,11 @@ class GatewaySession(
     @Volatile
     var promptJob: Job? = null
 
-    val connections: MutableSet<WebSocketSession> = ConcurrentHashMap.newKeySet()
+    val connections: MutableSet<SendChannel<WsMessage>> = ConcurrentHashMap.newKeySet()
 
     // Track the currently displayed permission dialog so reconnecting clients can see it
     @Volatile
-    var activePermissionHtml: String? = null
+    var activePermission: WsMessage.PermissionRequest? = null
 
     // Gateway-internal slash commands (e.g. /simulate, /autopilot)
     @Volatile
@@ -67,12 +67,10 @@ class GatewaySession(
     val allCommands: List<CommandInfo> get() = internalCommands + availableCommands
 
     suspend fun broadcast(msg: WsMessage) {
-        val text = broadcastJson.encodeToString(WsMessage.serializer(), msg)
-        val frame = Frame.Text(text)
-        val dead = mutableListOf<WebSocketSession>()
+        val dead = mutableListOf<SendChannel<WsMessage>>()
         for (conn in connections) {
             try {
-                conn.send(frame.copy())
+                conn.send(msg)
             } catch (_: Exception) {
                 dead.add(conn)
             }
@@ -107,7 +105,7 @@ class GatewaySession(
 
         scope.launch {
             for (pending in clientOps.pendingPermissions) {
-                val html = permissionContentHtml(
+                val permMsg = WsMessage.PermissionRequest(
                     toolCallId = pending.toolCallId,
                     title = pending.title,
                     options = pending.options.map { opt ->
@@ -118,9 +116,8 @@ class GatewaySession(
                         )
                     },
                 )
-                activePermissionHtml = html
-                broadcast(WsMessage.HtmlUpdate(target = Id.PERMISSION_CONTENT, swap = Swap.InnerHTML, html = html))
-                broadcast(WsMessage.HtmlUpdate(target = Id.PERMISSION_DIALOG, swap = Swap.Show, html = ""))
+                activePermission = permMsg
+                broadcast(permMsg)
             }
         }
 
@@ -130,11 +127,7 @@ class GatewaySession(
                 val conn = connections.firstOrNull()
                 if (conn != null) {
                     try {
-                        val text = broadcastJson.encodeToString(
-                            WsMessage.serializer(),
-                            WsMessage.BrowserStateRequest(req.requestId, req.query),
-                        )
-                        conn.send(Frame.Text(text))
+                        conn.send(WsMessage.BrowserStateRequest(req.requestId, req.query))
                     } catch (e: Exception) {
                         logger.debug("Failed to send browser state request", e)
                     }

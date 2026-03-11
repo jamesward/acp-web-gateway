@@ -15,7 +15,6 @@ import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import com.jamesward.acpgateway.shared.appStylesheet
 import org.slf4j.LoggerFactory
 import java.util.UUID
 
@@ -55,12 +54,8 @@ private fun Application.simulationModule(
     routing {
         get("/") {
             call.respondHtml(HttpStatusCode.OK) {
-                chatPage("Simulated Agent", debug = true, currentAgentId = "simulated")
+                chatPage("Simulated Agent", debug = true)
             }
-        }
-
-        get("/styles.css") {
-            call.respondText(appStylesheet(), ContentType.Text.CSS)
         }
 
         get("/health") {

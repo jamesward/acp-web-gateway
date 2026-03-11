@@ -14,14 +14,25 @@ sealed class WsMessage {
         val files: List<FileAttachment> = emptyList(),
     ) : WsMessage()
 
+    /** Server → client: streamed agent response with SSR markdown HTML. */
     @Serializable
     @SerialName("agent_text")
-    data class AgentText(val text: String) : WsMessage()
+    data class AgentText(
+        val msgId: String,
+        val markdown: String,
+        val usage: String? = null,
+    ) : WsMessage()
 
+    /** Server → client: streamed agent thought with SSR markdown HTML. */
     @Serializable
     @SerialName("agent_thought")
-    data class AgentThought(val text: String) : WsMessage()
+    data class AgentThought(
+        val thoughtId: String,
+        val markdown: String,
+        val usage: String? = null,
+    ) : WsMessage()
 
+    /** Server → client: tool call start or update. */
     @Serializable
     @SerialName("tool_call")
     data class ToolCall(
@@ -29,6 +40,9 @@ sealed class WsMessage {
         val title: String,
         val status: ToolStatus,
         val content: String? = null,
+        val contentHtml: String? = null,
+        val kind: ToolKind? = null,
+        val location: String? = null,
     ) : WsMessage()
 
     @Serializable
@@ -48,10 +62,7 @@ sealed class WsMessage {
 
     @Serializable
     @SerialName("turn_complete")
-    data class TurnComplete(
-        val stopReason: String,
-        val renderedHtml: String? = null,
-    ) : WsMessage()
+    data class TurnComplete(val stopReason: String) : WsMessage()
 
     @Serializable
     @SerialName("error")
@@ -74,13 +85,10 @@ sealed class WsMessage {
     @SerialName("diagnose")
     data object Diagnose : WsMessage()
 
+    /** Server → client: replay a completed user message from history. */
     @Serializable
-    @SerialName("html_update")
-    data class HtmlUpdate(
-        val target: String,
-        val swap: Swap,
-        val html: String,
-    ) : WsMessage()
+    @SerialName("user_message")
+    data class UserMessage(val text: String) : WsMessage()
 
     @Serializable
     @SerialName("browser_state_request")
@@ -97,15 +105,13 @@ sealed class WsMessage {
     @Serializable
     @SerialName("change_agent")
     data class ChangeAgent(val agentId: String) : WsMessage()
-}
 
-@Serializable
-enum class Swap {
-    @SerialName("morph") Morph,
-    @SerialName("beforeend") BeforeEnd,
-    @SerialName("innerHTML") InnerHTML,
-    @SerialName("show") Show,
-    @SerialName("hide") Hide,
+    @Serializable
+    @SerialName("available_agents")
+    data class AvailableAgents(
+        val agents: List<AgentInfo>,
+        val currentAgentId: String? = null,
+    ) : WsMessage()
 }
 
 @Serializable
@@ -164,8 +170,25 @@ data class CommandInfo(
 )
 
 @Serializable
+data class AgentInfo(
+    val id: String,
+    val name: String,
+)
+
+@Serializable
 data class ChatEntry(
     val role: String,
     val content: String,
     val timestamp: Long,
+)
+
+@Serializable
+data class ToolCallDisplay(
+    val id: String,
+    val title: String,
+    val status: ToolStatus,
+    val content: String = "",
+    val contentHtml: String = "",
+    val kind: ToolKind? = null,
+    val location: String? = null,
 )

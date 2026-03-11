@@ -1,7 +1,5 @@
 package com.jamesward.acpgateway.shared
 
-import com.jamesward.acpgateway.shared.ChatEntry
-import com.jamesward.acpgateway.shared.ToolCallDisplay
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong

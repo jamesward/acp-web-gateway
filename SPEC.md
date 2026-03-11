@@ -135,6 +135,129 @@ Key Architecture: The CLI is similar to the web gateway server, it runs the agen
 - The CLI won't contain a server. It instead becomes a client to the remote gateway.
 - Use https://ajalt.github.io/clikt/ for the CLI
 
+## Kilua Wasm Migration (Client-Side)
+
+Migrate the `web` module from hand-rolled `kotlin-browser` + `@JsFun` interop to [Kilua](https://kilua.dev/) (v0.0.32), a Compose Runtime-based Kotlin/Wasm framework. This eliminates ~25 `@JsFun` declarations and replaces manual DOM/event wiring with typed composable APIs.
+
+### Motivation
+
+The current `web/App.kt` (~1135 lines) uses ~40 `@JsFun` declarations for basic DOM operations (getElementById, classList, innerHTML, event binding, timers, callbacks). Kotlin/Wasm requires `@JsFun` bridges because Wasm lambdas aren't JS functions, and `kotlin-browser` uses branded string types (`ElementId`, `ClassName`, `HtmlSource`) that can't be easily constructed from Wasm. This is error-prone and verbose. Kilua wraps all of this in typed Kotlin APIs.
+
+### What Kilua Provides
+
+- **No `@JsFun` for DOM ops** — element access, classList, innerHTML, insertAdjacentHTML all wrapped
+- **Composable event handlers** — `onClick { }`, `onKeyDown { }`, `onChange { }`, `onInput { }` etc.
+- **`rawHtml()` / `rawHtmlBlock()`** — insert server-rendered HTML into DOM, updates reactively on state change
+- **Typed DOM access** — `component.element` gives the underlying `HTMLElement` directly
+- **State management** — `mutableStateOf()` drives recomposition; replaces manual show/hide/enable/disable logic
+- **Coroutine integration** — `LaunchedEffect`, `onClickLaunch { }` for async operations; replaces `setTimeout`/`setInterval` `@JsFun` wrappers
+
+### Architecture Constraint
+
+Our architecture is **server-driven**: the server renders all HTML fragments and sends `HtmlUpdate` messages. Kilua is designed for client-side component trees. The migration uses Kilua for the **application shell** (form, buttons, modals, state) while the **message stream** remains imperative (server HTML applied via idiomorph).
+
+### Dependencies
+
+```toml
+# gradle/libs.versions.toml additions
+[versions]
+kilua = "0.0.32"
+compose = "1.11.0-alpha02"
+
+[libraries]
+kilua = { module = "dev.kilua:kilua", version.ref = "kilua" }
+
+[plugins]
+compose = { id = "org.jetbrains.compose", version.ref = "compose" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kilua = { id = "dev.kilua", version.ref = "kilua" }
+```
+
+### Migration Phases
+
+#### Phase 1: Project Setup
+
+- Add Kilua + Compose dependencies to `web/build.gradle.kts`
+- Add Compose compiler plugin and Kilua Gradle plugin
+- Keep `shared` module unchanged (server still renders HTML fragments)
+- Validate build compiles and WASM output works
+
+#### Phase 2: Application Shell (~25 `@JsFun` eliminated)
+
+Rewrite `App.kt` as a Kilua `Application`:
+
+```kotlin
+class App : Application() {
+    override fun start() {
+        root("root") {
+            // Compose-managed shell
+        }
+    }
+}
+```
+
+What moves to Kilua composables:
+
+| Current (`@JsFun` + imperative) | Kilua replacement |
+|---|---|
+| `getEl`, `addCls`, `rmCls`, `hasCls`, `setCls` | `component.element`, Kilua class management |
+| `setHtml`, `insertHtml` (shell elements) | `rawHtml()` / `rawHtmlBlock()` with state |
+| `onSubmit`, `onKeyDown`, `onClick`, `onChange`, `onInput`, `onScroll` | Composable event handlers |
+| `setTimeout`, `jsSetInterval`, `jsClearInterval`, `dateNow` | `LaunchedEffect` + `delay()`, `Clock.System.now()` |
+| `wrapStringCallback`, `wrapTwoStringCallback`, `wrapDropCallback` | Direct lambda use in Kilua event system |
+| `agentWorking`, `reloading`, `switchingAgent` (global vars) | `mutableStateOf()` driving recomposition |
+| Manual show/hide via `addCls(el, "hidden")` | Compose `if (visible) { ... }` conditionals |
+| `setupForm()` imperative init | Composable `form { }` with event handlers |
+| `setInputEnabled()` manual DOM mutation | `disabled = !enabled` via Compose state |
+| Status timer (`jsSetInterval` + manual DOM update) | `LaunchedEffect` coroutine with `delay(1000)` |
+| Autocomplete dropdown (manual HTML building) | Compose state-driven list rendering |
+
+#### Phase 3: Message Stream (keep idiomorph, ~15 `@JsFun` remain)
+
+The messages container still receives server-rendered HTML via `HtmlUpdate`. Idiomorph applies diffs. This stays imperative — Kilua's `rawHtml()` uses `innerHTML` (no morphing). Access the messages element via Kilua's `element` property and call idiomorph directly.
+
+`@JsFun` declarations that **remain** (no Kilua equivalent):
+
+- `morphElement` — idiomorph interop
+- `autoCollapseOlderBlocks` / `setupCollapseClickHandler` — complex DOM traversal
+- `captureScreenshot` — SVG foreignObject screenshot
+- `installConsoleCapture` / `getConsoleLogs` / `getDomState` / `inspectElements` — debug tooling
+- `startAudioRecording` / `stopAudioRecording` — MediaRecorder API
+- `readFileAt` / `readDtFileAt` — FileReader API for attachments
+- `onDrop` / `onPasteFiles` — drag-drop/paste with DataTransfer
+- `postRequest` / `pollUntilHealthy` / `postJsonRequest` — fetch API
+
+#### Phase 4: WebSocket
+
+Two options:
+1. **Direct `web.sockets.WebSocket`** with Kilua's typed event system (no `@JsFun` wrappers needed)
+2. **kilua-rpc `Socket`** class — coroutine-based `connect()`, `send()`, `receive()` with auto-retry
+
+WebSocket connection state becomes `mutableStateOf()`, driving UI updates on connect/disconnect.
+
+#### Phase 5: Server Template Update
+
+- Update `Pages.kt` — Kilua needs a `<div id="root">` mount point
+- Kilua generates its own JS bootstrap (replaces current WASM script tags)
+- Keep idiomorph inlined (still needed for message stream)
+- Update browser integration tests for new DOM structure
+
+### Risks
+
+1. **Compose Multiplatform alpha** — Kilua requires `compose 1.11.0-alpha02`. Pre-release dependency.
+2. **Idiomorph + Compose DOM conflict** — Compose runtime tracks DOM nodes. Idiomorph mutates DOM behind Compose's back. The messages container must be a "Compose escape hatch" where Kilua hands off to imperative code. Needs spike validation.
+3. **Bundle size** — Compose runtime adds weight to the WASM binary. Current client is very thin (~50KB).
+4. **Build toolchain** — Adds Compose compiler plugin, Kilua Gradle plugin. May need vite-kotlin plugin depending on dev workflow.
+
+### Validation Approach
+
+Start with a spike branch:
+1. Set up Kilua in `web` module
+2. Mount a minimal composable that includes a `rawHtmlBlock` for the messages container
+3. Verify idiomorph still works within the Kilua-managed tree
+4. If DOM ownership conflict is manageable, proceed with full migration
+5. If not, consider lighter alternatives (extract `@JsFun` helpers into utility, wait for kotlin-browser Wasm improvements)
+
 ## Future
 
 - Global config file for default agent selection

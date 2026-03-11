@@ -1,8 +1,6 @@
 package com.jamesward.acpgateway.shared
 
 import kotlinx.serialization.json.Json
-import org.commonmark.parser.Parser
-import org.commonmark.renderer.html.HtmlRenderer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -36,12 +34,33 @@ class WsMessageTest {
 
     @Test
     fun agentTextRoundTrip() {
-        val msg: WsMessage = WsMessage.AgentText("chunk")
+        val msg: WsMessage = WsMessage.AgentText(msgId = "msg-1", markdown = "chunk")
         val encoded = json.encodeToString(WsMessage.serializer(), msg)
         assertTrue(encoded.contains("\"type\":\"agent_text\""))
         val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
         assertIs<WsMessage.AgentText>(decoded)
-        assertEquals("chunk", decoded.text)
+        assertEquals("msg-1", decoded.msgId)
+        assertEquals("chunk", decoded.markdown)
+    }
+
+    @Test
+    fun agentTextWithUsage() {
+        val msg: WsMessage = WsMessage.AgentText(msgId = "msg-1", markdown = "hi", usage = "10K / 100K tokens (10%)")
+        val encoded = json.encodeToString(WsMessage.serializer(), msg)
+        val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
+        assertIs<WsMessage.AgentText>(decoded)
+        assertEquals("10K / 100K tokens (10%)", decoded.usage)
+    }
+
+    @Test
+    fun agentThoughtRoundTrip() {
+        val msg: WsMessage = WsMessage.AgentThought(thoughtId = "thought-1", markdown = "thinking...")
+        val encoded = json.encodeToString(WsMessage.serializer(), msg)
+        assertTrue(encoded.contains("\"type\":\"agent_thought\""))
+        val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
+        assertIs<WsMessage.AgentThought>(decoded)
+        assertEquals("thought-1", decoded.thoughtId)
+        assertEquals("thinking...", decoded.markdown)
     }
 
     @Test
@@ -89,29 +108,6 @@ class WsMessageTest {
         val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
         assertIs<WsMessage.TurnComplete>(decoded)
         assertEquals("end_turn", decoded.stopReason)
-        assertNull(decoded.renderedHtml)
-    }
-
-    @Test
-    fun turnCompleteWithRenderedHtml() {
-        val msg: WsMessage = WsMessage.TurnComplete("end_turn", "<p>Hello <strong>world</strong></p>\n")
-        val encoded = json.encodeToString(WsMessage.serializer(), msg)
-        val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
-        assertIs<WsMessage.TurnComplete>(decoded)
-        assertEquals("<p>Hello <strong>world</strong></p>\n", decoded.renderedHtml)
-    }
-
-    @Test
-    fun markdownRendering() {
-        val parser = Parser.builder().build()
-        val renderer = HtmlRenderer.builder().build()
-        fun render(md: String) = renderer.render(parser.parse(md))
-
-        assertEquals("<p>Hello <strong>world</strong></p>\n", render("Hello **world**"))
-        assertTrue(render("# Heading").contains("<h1>"))
-        assertTrue(render("- item 1\n- item 2").contains("<li>"))
-        assertTrue(render("`code`").contains("<code>"))
-        assertTrue(render("```\nfoo\n```").contains("<pre>"))
     }
 
     @Test
@@ -141,18 +137,6 @@ class WsMessageTest {
     }
 
     @Test
-    fun htmlUpdateRoundTrip() {
-        val msg: WsMessage = WsMessage.HtmlUpdate(Css.MESSAGES, Swap.BeforeEnd, "<div>hello</div>")
-        val encoded = json.encodeToString(WsMessage.serializer(), msg)
-        assertTrue(encoded.contains("\"type\":\"html_update\""))
-        val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
-        assertIs<WsMessage.HtmlUpdate>(decoded)
-        assertEquals(Css.MESSAGES, decoded.target)
-        assertEquals(Swap.BeforeEnd, decoded.swap)
-        assertEquals("<div>hello</div>", decoded.html)
-    }
-
-    @Test
     fun toolCallRoundTrip() {
         val msg: WsMessage = WsMessage.ToolCall("tc-1", "Read file", ToolStatus.InProgress)
         val encoded = json.encodeToString(WsMessage.serializer(), msg)
@@ -161,5 +145,30 @@ class WsMessageTest {
         assertEquals("tc-1", decoded.toolCallId)
         assertEquals("Read file", decoded.title)
         assertEquals(ToolStatus.InProgress, decoded.status)
+    }
+
+    @Test
+    fun toolCallWithContent() {
+        val msg: WsMessage = WsMessage.ToolCall(
+            "tc-1", "Read file", ToolStatus.Completed,
+            content = "file contents here",
+            kind = ToolKind.Read,
+            location = "/src/main.kt",
+        )
+        val encoded = json.encodeToString(WsMessage.serializer(), msg)
+        val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
+        assertIs<WsMessage.ToolCall>(decoded)
+        assertEquals("file contents here", decoded.content)
+        assertEquals(ToolKind.Read, decoded.kind)
+        assertEquals("/src/main.kt", decoded.location)
+    }
+
+    @Test
+    fun userMessageRoundTrip() {
+        val msg: WsMessage = WsMessage.UserMessage("hello from user")
+        val encoded = json.encodeToString(WsMessage.serializer(), msg)
+        val decoded = json.decodeFromString(WsMessage.serializer(), encoded)
+        assertIs<WsMessage.UserMessage>(decoded)
+        assertEquals("hello from user", decoded.text)
     }
 }

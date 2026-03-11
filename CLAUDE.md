@@ -7,28 +7,28 @@ A web interface to AI agents via the [Agent Client Protocol](https://agentclient
 Three Gradle modules (Kotlin 2.3, JVM 21):
 
 ```
-shared/   — Kotlin Multiplatform (JVM + WasmJS). Message types, CSS definitions (kotlin-css), HTML fragment builders (kotlinx.html).
-server/   — Ktor 3.x (CIO) web server. Spawns the ACP agent process, manages sessions, serves HTML + WebSocket. Renders all UI fragments server-side.
-web/      — Kotlin/WasmJS thin browser client. Receives HtmlUpdate messages, applies to DOM via idiomorph. Handles form, files, scroll, screenshot.
+shared/   — Kotlin Multiplatform (JVM + WasmJS). Message types, WebSocket handler, ACP SDK integration. Kilua RPC service interface.
+server/   — Ktor 3.x (CIO) web server. Spawns the ACP agent process, manages sessions, serves HTML pages + Kilua RPC WebSocket.
+web/      — Kotlin/WasmJS Kilua composable UI. Pure Compose-style components, Kilua RPC for typed WebSocket communication.
 ```
 
 ## Key Files
 
 ### shared
-- `Message.kt` — `WsMessage` sealed class (Prompt, HtmlUpdate, Connected, TurnComplete, PermissionResponse, Cancel, Diagnose, BrowserStateRequest/Response, etc.) and supporting types. All browser<->server communication uses these serialized as JSON over WebSocket.
-- `Styles.kt` — All CSS definitions using kotlin-css CssBuilder. `object Css` holds class name constants. `appStylesheet()` generates the full CSS string served at `/styles.css`.
-- `Fragments.kt` — HTML fragment builders using kotlinx.html `createHTML()`. Functions: `userMessageHtml`, `assistantMessageHtml`, `assistantRenderedHtml`, `thoughtMessageHtml`, `errorMessageHtml`, `toolBlockHtml`, `permissionContentHtml`, `statusTimerHtml`, `filePreviewHtml`.
+- `Message.kt` — `WsMessage` sealed class (Prompt, AgentText, AgentThought, ToolCall, Connected, TurnComplete, PermissionRequest/Response, Cancel, Diagnose, BrowserStateRequest/Response, AvailableCommands, ChangeAgent, UserMessage, Error) and supporting types (`ToolCallDisplay`, `FileAttachment`, `CommandInfo`, `ChatEntry`). All browser<->server communication uses these serialized as JSON over Kilua RPC or raw WebSocket.
+- `IChatService.kt` — Kilua RPC `@RpcService` interface defining the `chat` channel method.
+- `WebSocketHandler.kt` — Core `handleChatChannels(input, output, session, manager, ...)` function processing ACP events into WsMessages. Thin `handleChatWebSocket()` wrapper for CLI/simulation use.
 
 ### server
-- `Server.kt` — Ktor application setup, routing, `main()`. CLI args: `--agent <id>`, `--mode local|proxy`, `--debug`. Serves `/styles.css` from shared `appStylesheet()`. Runs on port 8080.
-- `AgentProcessManager.kt` — Spawns the ACP agent subprocess via stdio transport. Manages `GatewaySession` instances (prompt mutex, history, tool call tracking). Screenshots sent as `ContentBlock.Image` (PNG).
-- `WebSocketHandler.kt` — `handleChatWebSocket()` bridges browser WebSocket to ACP session. Renders all UI as HTML fragments using shared builders, sends `HtmlUpdate` messages. Server maintains tool block state per connection.
+- `Server.kt` — Ktor application setup, routing, `main()`. CLI args: `--agent <id>`, `--mode local|proxy`, `--debug`. Kilua RPC routes for browser WS, raw WS for relay. Runs on port 8080.
+- `ChatServiceImpl.kt` — Kilua RPC implementation of `IChatService`, delegates to `handleChatChannels`.
+- `AgentProcessManager.kt` — Spawns the ACP agent subprocess via stdio transport. Manages `GatewaySession` instances (prompt mutex, history, tool call tracking).
 - `GatewayClientOperations.kt` — Implements `ClientSessionOperations` (ACP SDK). Handles file I/O, terminal operations, and permission request flow via `CompletableDeferred`.
-- `Pages.kt` — Server-side HTML page templates using kotlinx.html (`chatPage`, `landingPage`). Inlines idiomorph (~3KB) for DOM morphing.
+- `Pages.kt` — Server-side HTML page templates using kotlinx.html (`chatPage`, `landingPage`). Minimal shell with `<div id="root">` mount point.
 - `Registry.kt` — Fetches ACP agent registry, resolves agent distribution (npx/uvx/binary) to a `ProcessCommand`.
 
 ### web
-- `App.kt` — Thin browser client using kotlin-browser typed DOM APIs + `@JsFun` bridges. Receives `HtmlUpdate` messages and applies them to the DOM via idiomorph (morph), innerHTML, or insertAdjacentHTML (beforeend). Handles form submission, file attachments, scroll management, status timer, permission response (event delegation), and SVG foreignObject PNG screenshots.
+- `App.kt` — Kilua composable UI. Pure Compose-style components using `mutableStateOf` for reactive state. Kilua RPC `getService<IChatService>().chat {}` for typed WS communication. Minimal `@JsFun` bridges only for relay WS and RPC URL prefix. Kilua form `textArea` with two-way value binding.
 
 ## Build & Run
 
@@ -67,8 +67,8 @@ The server's `processResources` task automatically runs `:web:wasmJsBrowserDevel
 - **Local mode**: Single session auto-created at startup. Root `/` serves chat page, `/ws` is WebSocket.
 - **Proxy mode**: Sessions created on demand. URLs are `/s/{sessionId}` and `/s/{sessionId}/ws`.
 - **ACP communication**: Server spawns agent as subprocess, communicates via stdio using the ACP Kotlin SDK's `StdioTransport` → `Protocol` → `Client` → `ClientSession`.
-- **Browser communication**: Browser connects via WebSocket. Server renders all UI as HTML fragments using shared builders (Fragments.kt), sends `HtmlUpdate(target, swap, html)` messages. Client applies updates via idiomorph (morph), innerHTML, or insertAdjacentHTML (beforeend).
-- **Permissions**: Agent requests permissions via `ClientSessionOperations.requestPermissions()` which suspends on a `CompletableDeferred`. Server sends pre-rendered permission dialog HTML via `HtmlUpdate`. Client uses event delegation on `data-tool-call-id`/`data-option-id` attributes to send `PermissionResponse` back.
+- **Browser communication**: Browser connects via Kilua RPC (typed WebSocket channels). Server sends structured `WsMessage` types (AgentText, AgentThought, ToolCall, etc.). Client renders UI using Kilua composables with reactive state.
+- **Permissions**: Agent requests permissions via `ClientSessionOperations.requestPermissions()` which suspends on a `CompletableDeferred`. Server sends `PermissionRequest` message. Client renders permission dialog as a Kilua composable and sends `PermissionResponse` back via RPC channel.
 - **Debug mode**: `--debug` flag sets `data-debug="true"` on `<body>`, enables the Diagnose button for stuck-task diagnostics.
 - **Browser debugging**: When working on the gateway via itself (agent is claude-code), the ACP agent can investigate client-side state and errors. Three mechanisms are available:
   1. **`browser://` virtual files** — Read browser state via the `Read` tool (routed through `fsReadTextFile`):
@@ -107,45 +107,35 @@ Do NOT fix UI bugs without a test. If you can't write a test first, explain why 
 
 ### Test layers (fastest to slowest)
 
-1. **Fragment tests** (`shared/src/commonTest/.../FragmentsTest.kt`) — Verify HTML output of fragment builders: CSS classes, IDs, data attributes, nesting, tool block summary logic. Run with `./gradlew :shared:jvmTest`.
-2. **Rendering flow tests** (`server/src/test/.../RenderingFlowTest.kt`) — Verify the WebSocket handler sends the correct sequence of `HtmlUpdate` messages (targets, swap modes, HTML content) for prompt round-trips. Uses `ControllableFakeClientSession` to simulate ACP events. Run with `./gradlew :server:test --tests "*.RenderingFlowTest"`.
-3. **Server tests** (`ServerTest.kt`) — HTTP endpoints, WebSocket connection, file attachment handling. Run with `./gradlew :server:test`.
-4. **Browser integration tests** (`BrowserIntegrationTest.kt`) — Full E2E with Playwright in Docker. Tests page load, form submission, permission dialogs, screenshots. Run with `./gradlew :server:browserTest`.
-5. **Agent integration tests** (`AgentIntegrationTest.kt`) — Real ACP agent, slow. Run with `./gradlew :server:integrationTest -Dtest.acp.agent=github-copilot-cli`.
+1. **Rendering flow tests** (`server/src/test/.../RenderingFlowTest.kt`) — Verify the WebSocket handler sends the correct sequence of `WsMessage` types for prompt round-trips. Uses `ControllableFakeClientSession` to simulate ACP events and `handleChatChannels` with in-memory channels. Run with `./gradlew :server:test --tests "*.RenderingFlowTest"`.
+2. **Server tests** (`ServerTest.kt`) — HTTP endpoints, channel-based chat handler, file attachment handling. Run with `./gradlew :server:test`.
+3. **Browser integration tests** (`BrowserIntegrationTest.kt`) — Full E2E with Playwright in Docker. Tests page load, WebSocket connection. Run with `./gradlew :server:browserTest`.
+4. **Agent integration tests** (`AgentIntegrationTest.kt`) — Real ACP agent, slow. Run with `./gradlew :server:integrationTest -Dtest.acp.agent=github-copilot-cli`.
 
 ### When to add tests for UI changes
-- **Changed Fragments.kt** → Add/update fragment tests verifying HTML structure.
-- **Changed WebSocketHandler.kt rendering logic** → Add/update rendering flow tests verifying HtmlUpdate sequence.
-- **Changed App.kt (client-side)** → Add/update browser integration tests. Also check via `browser://console` for JS errors.
-- **Changed Styles.kt** → Visual verification via screenshot. Consider browser integration test if layout-critical.
+- **Changed WebSocketHandler.kt message logic** → Add/update rendering flow tests verifying WsMessage sequence.
+- **Changed App.kt (client-side composables)** → Add/update browser integration tests.
+- **Changed message types (Message.kt)** → Update shared tests and rendering flow tests.
 
 ## Tech Gotchas
 
-### kotlinx.html
+### kotlinx.html (server module only)
+- Used in `Pages.kt` for server-side HTML page templates.
 - First positional arg varies by tag: `div("classes")` works, but `form("...")` is `action`, `textArea("...")` is `wrap`.
 - **Always use the named `classes = "..."` parameter** to be safe.
 
+### Kilua (web module)
+- Uses Kilua composable functions for all UI rendering: `div`, `span`, `button`, `details`, `summary`, `header`, `h3`, `p`, `pre`, `label`, `rawHtml`, etc.
+- Form controls: `textArea(value, rows, placeholder, disabled)` with `onInput { promptText = this.value }` for two-way binding.
+- Events: `onClick`, `onInput`, `onKeydown`, `onEvent<EventType>("eventname")` — all composable.
+- Kilua RPC: `getService<IChatService>().chat { sendChannel, receiveChannel -> ... }` for typed WebSocket channels.
+- `setRpcUrlPrefix(prefix)` must be called before connecting in proxy mode to route to the correct session path.
+- Minimal `@JsFun` bridges: only for relay WS callbacks and `setRpcUrlPrefix`. No DOM manipulation.
+
 ### Kotlin/Wasm (web module)
-- Uses `kotlin-wrappers:kotlin-browser` for typed DOM access (`web.dom.document`, `web.html.HTMLElement`, `web.location.location`, `web.sockets.WebSocket`, `web.timers.*`, `web.keyboard.KeyboardEvent`).
-- kotlin-browser's branded string types (`ElementId`, `ClassName`, `HtmlSource`, `InsertPosition`) and `EventHandler` external interface can't be easily constructed from Kotlin/Wasm, so `@JsFun` helpers are used for: `getEl`, `addCls`/`rmCls`/`setCls`, `setHtml`, `insertHtml`, and event binding (`onSubmit`, `onClick`, `onKeyDown`, etc.).
-- Remaining `@JsFun` declarations for: idiomorph, file reading, drag-drop, paste, event delegation, console capture, browser state, screenshot.
-- Callbacks from JS to Wasm use `wrapStringCallback`/`wrapTwoStringCallback`/`wrapDropCallback` patterns.
 - Requires `@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)`.
 - WASM webpack dev output path: `build/kotlin-webpack/wasmJs/developmentExecutable/` (NOT `build/dist/...`).
-- Client is a thin patcher — receives pre-rendered HTML from server, applies via idiomorph.
-
-### kotlin-css (shared module)
-- Typed CSS DSL via `CssBuilder`. All styles defined in `shared/.../Styles.kt`.
-- `appStylesheet()` generates the full CSS string, served at `/styles.css`.
-- `object Css` holds all class name constants (e.g. `Css.MSG_USER`, `Css.TOOL_BLOCK`).
-- `BorderRadius()` constructor doesn't exist for multi-value — use `put("border-radius", "...")`.
-- `RuleSet` = `CssBuilder.() -> Unit` for composable style blocks.
-
-### idiomorph
-- ~3KB DOM differ inlined in the page template (Pages.kt `IDIOMORPH_INLINE`).
-- **PATCHED**: `createMorphContext` deep-merges `config.callbacks` onto defaults. Stock idiomorph uses `Object.assign` which shallow-merges, so passing a partial `callbacks` object (e.g. only `beforeNodeMorphed`) would replace ALL default callbacks and crash. Our patch saves the user's callbacks, assigns defaults, then merges user overrides on top.
-- Called via `Idiomorph.morph(el, html, {morphStyle: 'outerHTML', callbacks: {…}})` from client. Only specify the callbacks you need to customize — unspecified ones get defaults.
-- Preserves scroll position, focus state, and form values during morph.
+- `web.dom.document` from kotlin-browser used only for reading body data attributes at startup.
 
 ### Ktor 3.x
 - Use `WebSocketServerSession` (not `DefaultWebSocketServerSession`).
@@ -160,9 +150,8 @@ Do NOT fix UI bugs without a test. If you can't write a test first, explain why 
 - Kotlin: 2.3.10
 - Ktor: 3.4.1
 - ACP SDK: 0.16.5
+- Kilua: 0.0.32
+- Kilua RPC: 0.0.42
 - kotlinx-serialization-json: 1.10.0
-- kotlinx-html: 0.12.0
-- kotlin-css: 2026.3.8
-- kotlin-browser: 2026.3.8
+- kotlinx-html: 0.12.0 (server only, for page templates)
 - commonmark: 0.27.1
-- idiomorph: 0.3.0 (inlined)

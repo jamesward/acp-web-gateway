@@ -75,12 +75,7 @@ class CliRelayIntegrationTest {
             val cliClient = newWsClient()
             val cliJob = launch {
                 cliClient.clientWebSocket(urlString = "ws://localhost:$port/s/$sessionId/agent") {
-                    session.connections.add(this)
-                    try {
-                        handleChatWebSocket(session, manager)
-                    } finally {
-                        session.connections.remove(this)
-                    }
+                    handleChatWebSocket(session, manager)
                 }
             }
 
@@ -121,18 +116,19 @@ class CliRelayIntegrationTest {
             assertTrue(receivedMessages.any { it is WsMessage.Connected }, "Should receive Connected")
             assertTrue(receivedMessages.any { it is WsMessage.TurnComplete }, "Should receive TurnComplete")
 
-            // Should have at least one HtmlUpdate containing the agent's response text
-            val htmlUpdates = receivedMessages.filterIsInstance<WsMessage.HtmlUpdate>()
-            assertTrue(htmlUpdates.isNotEmpty(), "Should receive HtmlUpdate messages")
+            // Should have at least one AgentText containing the agent's response
+            val agentTexts = receivedMessages.filterIsInstance<WsMessage.AgentText>()
+            assertTrue(agentTexts.isNotEmpty(), "Should receive AgentText messages")
             assertTrue(
-                htmlUpdates.any { it.html.contains("Hello from agent!") },
-                "HtmlUpdate should contain agent response text. Got: ${htmlUpdates.map { "${it.target}/${it.swap}: ${it.html.take(100)}" }}",
+                agentTexts.any { it.markdown.contains("Hello from agent!") },
+                "AgentText should contain agent response text. Got: ${agentTexts.map { it.markdown.take(100) }}",
             )
 
-            // Should have an HtmlUpdate for the user's message
+            // Should have a UserMessage for the user's prompt
+            val userMessages = receivedMessages.filterIsInstance<WsMessage.UserMessage>()
             assertTrue(
-                htmlUpdates.any { it.html.contains("test question") },
-                "HtmlUpdate should contain user prompt text",
+                userMessages.any { it.text.contains("test question") },
+                "UserMessage should contain user prompt text",
             )
 
             // Verify the fake session actually received the prompt
@@ -171,9 +167,7 @@ class CliRelayIntegrationTest {
             assertEquals(200, response.status.value)
 
             val body = response.bodyAsText()
-            assertTrue(body.contains(sessionId.toString()), "Page should contain session ID")
-            assertTrue(body.contains(Id.PROMPT_FORM), "Page should contain prompt form")
-            assertTrue(body.contains("data-session-id"), "Page should have data-session-id for WebSocket connection")
+            assertTrue(body.contains("""id="root""""), "Page should contain root mount point")
 
             cliJob.cancelAndJoin()
             cliClient.close()

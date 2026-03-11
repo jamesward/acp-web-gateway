@@ -83,12 +83,7 @@ class Acp2Web : CliktCommand(name = "acp2web") {
                             }
 
                             val session = mgr.createSession()
-                            session.connections.add(this)
-                            try {
-                                handleChatWebSocket(session, mgr)
-                            } finally {
-                                session.connections.remove(this)
-                            }
+                            handleChatWebSocket(session, mgr)
                         }
 
                         // After initial agent selection, loop to reconnect with agent query param
