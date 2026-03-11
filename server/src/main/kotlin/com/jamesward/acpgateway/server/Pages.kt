@@ -1,7 +1,6 @@
 package com.jamesward.acpgateway.server
 
-import com.jamesward.acpgateway.shared.Css
-import com.jamesward.acpgateway.shared.Id
+import com.jamesward.acpgateway.shared.*
 import kotlinx.html.*
 import java.util.UUID
 
@@ -12,6 +11,7 @@ fun HTML.chatPage(
     dev: Boolean = false,
     agents: List<RegistryAgent> = emptyList(),
     currentAgentId: String? = null,
+    canSwapAgent: Boolean = true,
 ) {
     head {
         meta { charset = "utf-8" }
@@ -31,32 +31,25 @@ fun HTML.chatPage(
         }
         div(classes = Css.HEADER) {
             // Agent icon + name + swap button
-            if (agents.isNotEmpty() && currentAgentId != null) {
-                val current = agents.find { it.id == currentAgentId }
-                if (current?.icon != null) {
-                    img(classes = Css.AGENT_ICON_SM) {
-                        src = current.icon
-                        alt = current.name
-                    }
+            val current = if (agents.isNotEmpty() && currentAgentId != null) {
+                agents.find { it.id == currentAgentId }
+            } else null
+            if (current?.icon != null) {
+                img(classes = Css.AGENT_ICON_SM) {
+                    src = current.icon!!
+                    alt = current.name
                 }
-                span(classes = Css.AGENT_NAME_TEXT) {
-                    id = Id.AGENT_INFO
-                    +(current?.name ?: currentAgentId)
-                }
+            }
+            span(classes = Css.AGENT_NAME_TEXT) {
+                id = Id.AGENT_INFO
+                +(current?.name ?: currentAgentId ?: "")
+            }
+            if (canSwapAgent && agents.isNotEmpty() && currentAgentId != null) {
                 button(classes = Css.AGENT_SWAP_BTN_CLS) {
                     id = Id.AGENT_SWAP_BTN
                     type = ButtonType.button
                     title = "Switch agent"
                     +"⇄"
-                }
-            } else if (currentAgentId != null) {
-                span(classes = Css.AGENT_NAME_TEXT) {
-                    id = Id.AGENT_INFO
-                    +currentAgentId
-                }
-            } else {
-                span(classes = Css.AGENT_NAME_TEXT) {
-                    id = Id.AGENT_INFO
                 }
             }
 
@@ -105,6 +98,7 @@ fun HTML.chatPage(
                     title = "Attach files"
                     +"+"
                 }
+                // TODO: Re-enable voice input button once audio transcription is available
                 input(classes = Css.HIDDEN) {
                     id = Id.FILE_INPUT
                     type = InputType.file
@@ -165,7 +159,7 @@ fun HTML.chatPage(
                                 attributes["data-agent-id"] = agent.id
                                 if (agent.icon != null) {
                                     img(classes = Css.AGENT_ROW_ICON) {
-                                        src = agent.icon
+                                        src = agent.icon!!
                                         alt = agent.name
                                     }
                                 }

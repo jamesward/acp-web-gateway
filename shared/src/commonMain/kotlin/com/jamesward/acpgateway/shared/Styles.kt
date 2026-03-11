@@ -21,6 +21,7 @@ object Id {
     const val AGENT_LOADING = "agent-loading"
     const val PERMISSION_DIALOG = "permission-dialog"
     const val PERMISSION_CONTENT = "permission-content"
+    const val VOICE_BTN = "voice-btn"
     const val SCREENSHOT_TOGGLE = "screenshot-toggle"
     const val AUTOCOMPLETE = "autocomplete"
     const val TASK_STATUS_WRAP = "task-status-wrap"
@@ -109,6 +110,8 @@ object Css {
     const val BTN_GROUP = "btn-group"
     const val SCREENSHOT_LABEL = "screenshot-label"
     const val SCREENSHOT_CHECK = "screenshot-check"
+    const val VOICE_BTN = "voice-btn"
+    const val VOICE_BTN_ACTIVE = "voice-btn-active"
     const val DIAGNOSE_BTN = "diagnose-btn"
     const val RELOAD_BTN = "reload-btn"
 
@@ -796,6 +799,32 @@ fun appStylesheet(): String = CssBuilder().apply {
     }
     ".${Css.ATTACH_BTN}:hover" {
         backgroundColor = Colors.gray600
+    }
+    ".${Css.VOICE_BTN}" {
+        flexShrink = 0.0
+        alignSelf = Align.center
+        backgroundColor = Colors.gray700
+        color = Colors.gray300
+        width = 40.px
+        height = 40.px
+        borderRadius = 12.px
+        display = Display.flex
+        alignItems = Align.center
+        justifyContent = JustifyContent.center
+        border = Border(1.px, BorderStyle.solid, Colors.gray600)
+        cursor = Cursor.pointer
+    }
+    ".${Css.VOICE_BTN}:hover" {
+        backgroundColor = Colors.gray600
+    }
+    ".${Css.VOICE_BTN_ACTIVE}" {
+        backgroundColor = Colors.red600
+        color = Colors.white
+        border = Border(1.px, BorderStyle.solid, Colors.red600)
+        put("animation", "pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite")
+    }
+    ".${Css.VOICE_BTN_ACTIVE}:hover" {
+        backgroundColor = Colors.red700
     }
     ".${Css.PROMPT_INPUT}" {
         flex = Flex(1, 1, 0.px)

@@ -1,4 +1,5 @@
 package com.jamesward.acpgateway.server
+import com.jamesward.acpgateway.shared.*
 
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.EmbeddedResourceResource

@@ -1,4 +1,4 @@
-package com.jamesward.acpgateway.server
+package com.jamesward.acpgateway.shared
 
 import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.common.Event
@@ -9,7 +9,6 @@ import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.ToolCallContent
 import com.agentclientprotocol.model.ToolCallStatus
 import com.jamesward.acpgateway.shared.*
-import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.consumeEach
@@ -24,6 +23,9 @@ import org.commonmark.renderer.html.HtmlRenderer
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("WebSocketHandler")
+
+/** Thrown when a ChangeAgent message is received, signaling the caller to switch agents. */
+class AgentSwitchException(val agentId: String) : Exception("Switch to agent: $agentId")
 private val json = Json { ignoreUnknownKeys = true }
 
 // ---- ACP SDK → shared enum mappings ----
@@ -149,7 +151,13 @@ private class UsageState {
     }
 }
 
-suspend fun WebSocketServerSession.handleChatWebSocket(session: GatewaySession, manager: AgentProcessManager, autoPromptText: String? = null, debug: Boolean = false, commandHandler: CommandHandler? = null, internalCommands: List<CommandInfo> = emptyList()) {
+/**
+ * A command handler intercepts slash-commands (e.g. `/autopilot`) before they reach the agent.
+ * Return a modified [WsMessage.Prompt] to send to the agent instead, or `null` to use the original prompt.
+ */
+typealias CommandHandler = suspend (prompt: WsMessage.Prompt, session: GatewaySession) -> WsMessage.Prompt?
+
+suspend fun WebSocketSession.handleChatWebSocket(session: GatewaySession, manager: AgentProcessManager, autoPromptText: String? = null, debug: Boolean = false, commandHandler: CommandHandler? = null, internalCommands: List<CommandInfo> = emptyList()) {
     while (!session.ready) {
         delay(100)
     }
@@ -294,6 +302,17 @@ suspend fun WebSocketServerSession.handleChatWebSocket(session: GatewaySession, 
                     }
                     is WsMessage.BrowserStateResponse -> {
                         session.clientOps.completeBrowserState(wsMsg.requestId, wsMsg.state)
+                    }
+                    is WsMessage.ChangeAgent -> {
+                        logger.info("Received ChangeAgent: {}", wsMsg.agentId)
+                        session.cancelPrompt()
+                        withTimeoutOrNull(5000) { session.promptJob?.join() }
+                        session.promptJob?.cancel()
+                        session.promptJob = null
+                        session.store.clearToolCalls(session.id)
+                        session.store.setPromptStartTime(session.id, 0L)
+                        session.store.clearTurnState(session.id)
+                        throw AgentSwitchException(wsMsg.agentId)
                     }
                     else -> logger.warn("Unexpected message from browser: {}", wsMsg)
                 }
@@ -571,7 +590,7 @@ private fun handlePermissionResponse(
     session.clientOps.completePermission(response.toolCallId, response.optionId)
 }
 
-private suspend fun WebSocketServerSession.sendWsMessage(msg: WsMessage) {
+private suspend fun WebSocketSession.sendWsMessage(msg: WsMessage) {
     val text = json.encodeToString(WsMessage.serializer(), msg)
     send(Frame.Text(text))
 }

@@ -93,6 +93,10 @@ sealed class WsMessage {
     @Serializable
     @SerialName("available_commands")
     data class AvailableCommands(val commands: List<CommandInfo>) : WsMessage()
+
+    @Serializable
+    @SerialName("change_agent")
+    data class ChangeAgent(val agentId: String) : WsMessage()
 }
 
 @Serializable

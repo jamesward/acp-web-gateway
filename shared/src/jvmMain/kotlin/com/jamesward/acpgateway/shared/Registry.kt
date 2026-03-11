@@ -1,4 +1,4 @@
-package com.jamesward.acpgateway.server
+package com.jamesward.acpgateway.shared
 
 import io.ktor.client.*
 import io.ktor.client.call.*

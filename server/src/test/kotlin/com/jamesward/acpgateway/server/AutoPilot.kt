@@ -1,4 +1,5 @@
 package com.jamesward.acpgateway.server
+import com.jamesward.acpgateway.shared.*
 
 import com.jamesward.acpgateway.shared.WsMessage
 import com.microsoft.playwright.Browser

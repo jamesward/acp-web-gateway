@@ -108,6 +108,33 @@ Client (thin Wasm + kotlin-browser + idiomorph):
 - Binaries via Kotlin Native for Linux, Mac, Windows
 - Jar on Maven Central
 
+## acp2web CLI
+
+Key Architecture: The CLI is similar to the web gateway server, it runs the agent, holds the state, but does not serve UI. The web gateway in this `proxy` mode is just a web server passthrough and web UI server which enables remote access to the agent. In this mode there are two websocket connections: acp2web <-> remote web gateway <-> user
+
+- Users will start an `acp2web` CLI on their machine in their project directory
+- The `acp2web` program initiates a connection to a remote ACP Web Gateway server
+- The `acp2web` CLI will create a websocket connection to the remote gateway, which will in-turn proxy that to through to the user's browser
+- Like the web gateway server, in local mode the CLI will create the agent session (potentially not until the user selects one in the web UI, if one wasn't specified)
+- The `acp2web` program will remain running until the user ctrl-c exits it or terminates it some other way
+- The command will have optional parameters for `--agent` and `--gateway`
+- If `--agent` is not specified, the user will select their agent when they open the web gateway
+- If `--gateway` is not specified, a default will be used (`http://localhost:8080` for now)
+- The ACP Web Gateway must be running in proxy mode
+- The `acp2web` program will create a UUID session id and use that to connect to the remote gateway
+
+- The URL to open the web gateway will be outputted to the console (i.e. https://localhost:8080/s/12345678-1234-1234-1234-1234567890ab)
+- The user can then open the URL in their browser to interact with the remote gateway
+
+- For now the `acp2web` program will be a Jar
+- In the future, if the dependencies support Kotlin/Native we will use that
+- In the meantime we may explore creating binaries with GraalVM Native Image
+
+- We will need a new Kotlin subproject named `cli`
+- This project will need to reuse shared code and we will need to refactor the necessary code to enable this
+- The CLI won't contain a server. It instead becomes a client to the remote gateway.
+- Use https://ajalt.github.io/clikt/ for the CLI
+
 ## Future
 
 - Global config file for default agent selection

@@ -14,7 +14,6 @@ application {
 }
 
 val ktorVersion = "3.4.1"
-val acpSdkVersion = "0.16.5"
 
 dependencies {
     implementation(project(":shared"))
@@ -24,23 +23,19 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
     implementation("io.ktor:ktor-server-websockets:$ktorVersion")
     implementation("io.ktor:ktor-server-html-builder:$ktorVersion")
-    implementation("io.ktor:ktor-client-cio:$ktorVersion")
-    implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
-    implementation("com.agentclientprotocol:acp:$acpSdkVersion")
-    implementation("com.agentclientprotocol:acp-ktor-client:$acpSdkVersion")
-    implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.7.0")
-    implementation("org.commonmark:commonmark:0.27.1")
-    implementation("io.github.java-diff-utils:java-diff-utils:4.15")
-    implementation("ch.qos.logback:logback-classic:1.5.18")
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
+    testImplementation("io.ktor:ktor-client-cio:$ktorVersion")
+    testImplementation("io.ktor:ktor-client-websockets:$ktorVersion")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.orange-buffalo:testcontainers-playwright:0.12.0")
+    testImplementation("org.commonmark:commonmark:0.27.1")
 }
 
 tasks.test {
     exclude("**/AgentIntegrationTest*")
     exclude("**/BrowserIntegrationTest*")
+    exclude("**/CliRelayIntegrationTest*")
 }
 
 tasks.register<Test>("integrationTest") {
@@ -50,6 +45,19 @@ tasks.register<Test>("integrationTest") {
     classpath = tasks.test.get().classpath
     include("**/AgentIntegrationTest*")
     systemProperty("test.acp.agent", System.getProperty("test.acp.agent") ?: project.findProperty("test.acp.agent")?.toString() ?: "claude-acp")
+    testLogging {
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        events(org.gradle.api.tasks.testing.logging.TestLogEvent.STARTED, org.gradle.api.tasks.testing.logging.TestLogEvent.PASSED, org.gradle.api.tasks.testing.logging.TestLogEvent.SKIPPED, org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED)
+    }
+}
+
+tasks.register<Test>("cliRelayTest") {
+    description = "Runs CLI relay integration tests (no real agent or browser needed)"
+    group = "verification"
+    testClassesDirs = tasks.test.get().testClassesDirs
+    classpath = tasks.test.get().classpath
+    include("**/CliRelayIntegrationTest*")
     testLogging {
         showStandardStreams = true
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
@@ -71,9 +79,16 @@ tasks.register<Test>("browserTest") {
     }
 }
 
+val isProduction = gradle.startParameter.taskNames.any { "stage" in it || "installDist" in it }
+
 val copyWasm = tasks.register<Copy>("copyWasmAssets") {
-    dependsOn(":web:wasmJsBrowserDevelopmentWebpack")
-    from(project(":web").layout.buildDirectory.dir("kotlin-webpack/wasmJs/developmentExecutable"))
+    if (isProduction) {
+        dependsOn(":web:wasmJsBrowserProductionWebpack")
+        from(project(":web").layout.buildDirectory.dir("kotlin-webpack/wasmJs/productionExecutable"))
+    } else {
+        dependsOn(":web:wasmJsBrowserDevelopmentWebpack")
+        from(project(":web").layout.buildDirectory.dir("kotlin-webpack/wasmJs/developmentExecutable"))
+    }
     into(layout.buildDirectory.dir("resources/main/static"))
 }
 

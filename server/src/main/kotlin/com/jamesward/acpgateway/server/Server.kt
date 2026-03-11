@@ -8,14 +8,14 @@ import io.ktor.server.http.content.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
-import com.jamesward.acpgateway.shared.CommandInfo
-import com.jamesward.acpgateway.shared.WsMessage
-import com.jamesward.acpgateway.shared.appStylesheet
+import com.jamesward.acpgateway.shared.*
 import io.ktor.server.routing.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import io.ktor.websocket.Frame
+import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -23,17 +23,27 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Tracks a relay session where a CLI backend connects to the gateway
+ * and the gateway relays messages between the CLI and browser clients.
+ */
+class RelaySession(val sessionId: UUID) {
+    @Volatile
+    var backendWs: WebSocketSession? = null
+    @Volatile
+    var agentId: String? = null
+    @Volatile
+    var switchInProgress: Boolean = false
+    val frontendConnections: MutableSet<WebSocketSession> = ConcurrentHashMap.newKeySet()
+    val messageCache = java.util.concurrent.ConcurrentLinkedQueue<String>()
+}
 
 enum class GatewayMode { LOCAL, PROXY }
 
 private val logger = LoggerFactory.getLogger("Server")
-
-/**
- * A command handler intercepts slash-commands (e.g. `/autopilot`) before they reach the agent.
- * Return a modified [WsMessage.Prompt] to send to the agent instead, or `null` to use the original prompt.
- */
-typealias CommandHandler = suspend (prompt: WsMessage.Prompt, session: GatewaySession) -> WsMessage.Prompt?
 
 /**
  * Holds the current agent process and supports switching agents at runtime.
@@ -107,6 +117,8 @@ fun Application.module(
         maxFrameSize = Long.MAX_VALUE
     }
 
+    val relaySessions = ConcurrentHashMap<UUID, RelaySession>()
+
     routing {
         when (mode) {
             GatewayMode.LOCAL -> {
@@ -139,6 +151,7 @@ fun Application.module(
             }
 
             GatewayMode.PROXY -> {
+
                 get("/") {
                     val agentName = holder.currentAgentName ?: "ACP Gateway"
                     call.respondHtml(HttpStatusCode.OK) {
@@ -147,15 +160,27 @@ fun Application.module(
                 }
 
                 get("/s/{sessionId}") {
-                    val manager = holder.manager
                     val sessionId = call.parameters["sessionId"]?.let {
                         try { UUID.fromString(it) } catch (_: Exception) { null }
                     }
-                    if (manager == null || sessionId == null || manager.getSession(sessionId) == null) {
+                    if (sessionId == null) {
                         call.respondText("Session not found", status = HttpStatusCode.NotFound)
                         return@get
                     }
-                    val agentName = holder.currentAgentName ?: "ACP Gateway"
+                    val manager = holder.manager
+                    val hasAgentSession = manager != null && manager.getSession(sessionId) != null
+                    val hasRelaySession = relaySessions.containsKey(sessionId)
+                    if (!hasAgentSession && !hasRelaySession) {
+                        call.respondText("Session not found", status = HttpStatusCode.NotFound)
+                        return@get
+                    }
+                    val relayAgentId = if (hasRelaySession) relaySessions[sessionId]?.agentId else null
+                    val effectiveAgentId = relayAgentId ?: holder.currentAgentId
+                    val agentName = if (relayAgentId != null) {
+                        holder.registry.find { it.id == relayAgentId }?.name ?: relayAgentId
+                    } else {
+                        holder.currentAgentName ?: "ACP Gateway"
+                    }
                     call.respondHtml(HttpStatusCode.OK) {
                         chatPage(
                             agentName = agentName,
@@ -163,18 +188,102 @@ fun Application.module(
                             debug = debug,
                             dev = dev,
                             agents = holder.registry,
-                            currentAgentId = holder.currentAgentId,
+                            currentAgentId = effectiveAgentId,
+                            canSwapAgent = true,
                         )
                     }
                 }
 
+                // CLI backend connects here to relay messages to/from browsers
+                webSocket("/s/{sessionId}/agent") {
+                    val sessionId = call.parameters["sessionId"]?.let {
+                        try { UUID.fromString(it) } catch (_: Exception) { null }
+                    } ?: run {
+                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Invalid session ID"))
+                        return@webSocket
+                    }
+                    val relay = relaySessions.getOrPut(sessionId) { RelaySession(sessionId) }
+                    relay.backendWs = this
+                    relay.switchInProgress = false
+                    val agentParam = call.request.queryParameters["agent"]
+                    if (agentParam != null) {
+                        relay.agentId = agentParam
+                    }
+                    logger.info("CLI agent connected for relay session {}", sessionId)
+
+                    try {
+                        incoming.consumeEach { frame ->
+                            if (frame is Frame.Text) {
+                                val text = frame.readText()
+                                relay.messageCache.add(text)
+                                val dead = mutableListOf<WebSocketSession>()
+                                for (conn in relay.frontendConnections) {
+                                    try {
+                                        conn.send(Frame.Text(text))
+                                    } catch (_: Exception) {
+                                        dead.add(conn)
+                                    }
+                                }
+                                relay.frontendConnections.removeAll(dead.toSet())
+                            }
+                        }
+                    } finally {
+                        relay.backendWs = null
+                        if (relay.switchInProgress) {
+                            // Keep session alive — CLI will reconnect with new agent
+                            logger.info("CLI disconnected during agent switch for relay session {}", sessionId)
+                        } else {
+                            for (conn in relay.frontendConnections) {
+                                try { conn.close(CloseReason(CloseReason.Codes.GOING_AWAY, "Agent disconnected")) } catch (_: Exception) {}
+                            }
+                            relaySessions.remove(sessionId)
+                            logger.info("CLI agent disconnected from relay session {}", sessionId)
+                        }
+                    }
+                }
+
                 webSocket("/s/{sessionId}/ws") {
+                    val sessionId = call.parameters["sessionId"]?.let {
+                        try { UUID.fromString(it) } catch (_: Exception) { null }
+                    }
+
+                    // Check for relay session first
+                    val relay = sessionId?.let { relaySessions[it] }
+                    if (relay != null) {
+                        relay.frontendConnections.add(this)
+                        logger.info("Browser connected to relay session {}", sessionId)
+
+                        // Replay cached messages so the browser gets full state
+                        for (cachedMsg in relay.messageCache) {
+                            try {
+                                send(Frame.Text(cachedMsg))
+                            } catch (_: Exception) {
+                                break
+                            }
+                        }
+
+                        try {
+                            incoming.consumeEach { frame ->
+                                if (frame is Frame.Text) {
+                                    val backend = relay.backendWs
+                                    if (backend != null) {
+                                        try {
+                                            backend.send(Frame.Text(frame.readText()))
+                                        } catch (_: Exception) {}
+                                    }
+                                }
+                            }
+                        } finally {
+                            relay.frontendConnections.remove(this)
+                            logger.info("Browser disconnected from relay session {}", sessionId)
+                        }
+                        return@webSocket
+                    }
+
+                    // Normal proxy mode: use handleChatWebSocket
                     val manager = holder.manager ?: run {
                         close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "No agent selected"))
                         return@webSocket
-                    }
-                    val sessionId = call.parameters["sessionId"]?.let {
-                        try { UUID.fromString(it) } catch (_: Exception) { null }
                     }
                     val session = sessionId?.let { manager.getSession(it) }
                     if (session == null) {
@@ -192,6 +301,37 @@ fun Application.module(
                 val request = apiJson.decodeFromString(ChangeAgentRequest.serializer(), body)
                 holder.switchAgent(request.agentId)
                 call.respondText("ok", ContentType.Text.Plain)
+            } catch (e: Exception) {
+                logger.error("Failed to change agent", e)
+                call.respondText(e.message ?: "Unknown error", ContentType.Text.Plain, HttpStatusCode.InternalServerError)
+            }
+        }
+
+        post("/s/{sessionId}/api/change-agent") {
+            try {
+                val sessionId = call.parameters["sessionId"]?.let {
+                    try { UUID.fromString(it) } catch (_: Exception) { null }
+                }
+                val body = call.receiveText()
+                val request = apiJson.decodeFromString(ChangeAgentRequest.serializer(), body)
+
+                // For relay sessions, forward ChangeAgent to CLI backend
+                val relay = sessionId?.let { relaySessions[it] }
+                if (relay != null) {
+                    val backend = relay.backendWs
+                    if (backend != null) {
+                        relay.switchInProgress = true
+                        relay.agentId = request.agentId
+                        val msg = apiJson.encodeToString(WsMessage.serializer(), WsMessage.ChangeAgent(request.agentId))
+                        backend.send(Frame.Text(msg))
+                        call.respondText("ok", ContentType.Text.Plain)
+                    } else {
+                        call.respondText("CLI backend not connected", ContentType.Text.Plain, HttpStatusCode.ServiceUnavailable)
+                    }
+                } else {
+                    holder.switchAgent(request.agentId)
+                    call.respondText("ok", ContentType.Text.Plain)
+                }
             } catch (e: Exception) {
                 logger.error("Failed to change agent", e)
                 call.respondText(e.message ?: "Unknown error", ContentType.Text.Plain, HttpStatusCode.InternalServerError)
@@ -301,15 +441,9 @@ private fun parseAgentId(args: Array<String>): String? {
     return args[idx + 1]
 }
 
-private fun parseMode(args: Array<String>): GatewayMode {
-    val idx = args.indexOf("--mode")
-    if (idx == -1 || idx + 1 >= args.size) return GatewayMode.LOCAL
-    return when (args[idx + 1].lowercase()) {
-        "proxy" -> GatewayMode.PROXY
-        "local" -> GatewayMode.LOCAL
-        else -> error("Unknown mode '${args[idx + 1]}'. Use 'local' or 'proxy'.")
-    }
-}
+private fun parseMode(args: Array<String>): GatewayMode =
+    if (args.contains("--proxy")) GatewayMode.PROXY else GatewayMode.LOCAL
+
 
 private fun parsePort(args: Array<String>): Int {
     val idx = args.indexOf("--port")

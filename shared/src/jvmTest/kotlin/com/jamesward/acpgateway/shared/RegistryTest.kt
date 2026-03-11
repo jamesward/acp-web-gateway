@@ -1,4 +1,4 @@
-package com.jamesward.acpgateway.server
+package com.jamesward.acpgateway.shared
 
 import kotlinx.serialization.json.Json
 import kotlin.test.Test

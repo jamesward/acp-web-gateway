@@ -5,3 +5,7 @@ plugins {
     kotlin("plugin.power-assert") version "2.3.10" apply false
     id("io.ktor.plugin") version "3.4.1" apply false
 }
+
+tasks.register("stage") {
+    dependsOn(":server:installDist")
+}

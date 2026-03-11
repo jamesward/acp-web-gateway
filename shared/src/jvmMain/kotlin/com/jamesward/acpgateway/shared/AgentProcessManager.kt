@@ -1,4 +1,4 @@
-package com.jamesward.acpgateway.server
+package com.jamesward.acpgateway.shared
 
 import com.agentclientprotocol.client.Client
 import com.agentclientprotocol.client.ClientInfo
@@ -10,7 +10,6 @@ import com.agentclientprotocol.model.*
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.transport.StdioTransport
 import com.jamesward.acpgateway.shared.*
-import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -50,7 +49,7 @@ class GatewaySession(
     @Volatile
     var promptJob: Job? = null
 
-    val connections: MutableSet<WebSocketServerSession> = ConcurrentHashMap.newKeySet()
+    val connections: MutableSet<WebSocketSession> = ConcurrentHashMap.newKeySet()
 
     // Track the currently displayed permission dialog so reconnecting clients can see it
     @Volatile
@@ -70,7 +69,7 @@ class GatewaySession(
     suspend fun broadcast(msg: WsMessage) {
         val text = broadcastJson.encodeToString(WsMessage.serializer(), msg)
         val frame = Frame.Text(text)
-        val dead = mutableListOf<WebSocketServerSession>()
+        val dead = mutableListOf<WebSocketSession>()
         for (conn in connections) {
             try {
                 conn.send(frame.copy())
@@ -238,9 +237,7 @@ class AgentProcessManager(
     val store: SessionStore = InMemorySessionStore()
 
     var agentName: String = ""
-        internal set
     var agentVersion: String = ""
-        internal set
 
     suspend fun start() {
         logger.info("Starting agent: {} {}", processCommand.command, processCommand.args)

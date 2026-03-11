@@ -1,4 +1,4 @@
-package com.jamesward.acpgateway.server
+package com.jamesward.acpgateway.shared
 
 import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.common.Event
@@ -36,7 +36,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-read-1"),
             title = "Read src/main/kotlin/Example.kt",
-            kind = ToolKind.READ,
+            kind = com.agentclientprotocol.model.ToolKind.READ,
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/main/kotlin/Example.kt")),
         )))
@@ -97,7 +97,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-read-2"),
             title = "Read build.gradle.kts",
-            kind = ToolKind.READ,
+            kind = com.agentclientprotocol.model.ToolKind.READ,
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("build.gradle.kts")),
         )))
@@ -162,7 +162,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-write-1"),
             title = "Write src/main/kotlin/CoroutineBasics.kt",
-            kind = ToolKind.EDIT,
+            kind = com.agentclientprotocol.model.ToolKind.EDIT,
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/main/kotlin/CoroutineBasics.kt")),
         )))
@@ -249,7 +249,7 @@ fun main() = runBlocking {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-run-1"),
             title = "Run ./gradlew :app:run",
-            kind = ToolKind.EXECUTE,
+            kind = com.agentclientprotocol.model.ToolKind.EXECUTE,
             status = ToolCallStatus.IN_PROGRESS,
         )))
         delay(833)
@@ -309,7 +309,7 @@ fun main() = runBlocking {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-write-2"),
             title = "Write src/main/kotlin/FlowExample.kt",
-            kind = ToolKind.EDIT,
+            kind = com.agentclientprotocol.model.ToolKind.EDIT,
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/main/kotlin/FlowExample.kt")),
         )))
@@ -395,7 +395,7 @@ fun main() = runBlocking {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-read-3"),
             title = "Read src/test/kotlin/CoroutineTest.kt",
-            kind = ToolKind.READ,
+            kind = com.agentclientprotocol.model.ToolKind.READ,
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/test/kotlin/CoroutineTest.kt")),
         )))
@@ -463,7 +463,7 @@ fun main() = runBlocking {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-write-3"),
             title = "Write src/test/kotlin/AdvancedCoroutineTest.kt",
-            kind = ToolKind.EDIT,
+            kind = com.agentclientprotocol.model.ToolKind.EDIT,
             status = ToolCallStatus.IN_PROGRESS,
             locations = listOf(ToolCallLocation("src/test/kotlin/AdvancedCoroutineTest.kt")),
         )))
@@ -536,7 +536,7 @@ class AdvancedCoroutineTest {
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-run-2"),
             title = "Run ./gradlew test",
-            kind = ToolKind.EXECUTE,
+            kind = com.agentclientprotocol.model.ToolKind.EXECUTE,
             status = ToolCallStatus.IN_PROGRESS,
         )))
         delay(833)

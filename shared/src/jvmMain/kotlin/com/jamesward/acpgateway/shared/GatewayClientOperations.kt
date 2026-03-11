@@ -1,4 +1,4 @@
-package com.jamesward.acpgateway.server
+package com.jamesward.acpgateway.shared
 
 import com.agentclientprotocol.common.ClientSessionOperations
 import com.agentclientprotocol.model.*

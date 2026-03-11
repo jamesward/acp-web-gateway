@@ -1,12 +1,5 @@
-package com.jamesward.acpgateway.server
+package com.jamesward.acpgateway.shared
 
-import com.jamesward.acpgateway.shared.Css
-import com.jamesward.acpgateway.shared.FileAttachment
-import com.jamesward.acpgateway.shared.PermissionKind
-import com.jamesward.acpgateway.shared.PermissionOptionInfo
-import com.jamesward.acpgateway.shared.Swap
-import com.jamesward.acpgateway.shared.ToolStatus
-import com.jamesward.acpgateway.shared.WsMessage
 import kotlinx.serialization.json.Json
 import org.commonmark.parser.Parser
 import org.commonmark.renderer.html.HtmlRenderer

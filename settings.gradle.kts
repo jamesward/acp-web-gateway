@@ -1,6 +1,6 @@
 rootProject.name = "acp-web-gateway"
 
-include("shared", "server", "web")
+include("shared", "server", "web", "cli")
 
 dependencyResolutionManagement {
     @Suppress("UnstableApiUsage")

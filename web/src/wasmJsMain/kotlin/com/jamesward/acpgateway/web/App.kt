@@ -212,6 +212,39 @@ private external fun setWsReadyState(v: JsNumber)
 @JsFun("(ms, callback) => setTimeout(callback, ms)")
 private external fun setTimeout(ms: JsNumber, callback: () -> Unit)
 
+// ---- Audio recording (MediaRecorder API) ----
+
+@JsFun("""() => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)""")
+private external fun hasMediaRecorder(): JsBoolean
+
+@JsFun("""(onData, onEnd) => {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+        var recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '' });
+        var chunks = [];
+        recorder.ondataavailable = function(e) { if (e.data.size > 0) chunks.push(e.data); };
+        recorder.onstop = function() {
+            stream.getTracks().forEach(function(t) { t.stop(); });
+            var blob = new Blob(chunks, { type: recorder.mimeType });
+            var reader = new FileReader();
+            reader.onload = function() {
+                var b64 = reader.result.split(',')[1] || '';
+                onData(b64, recorder.mimeType);
+            };
+            reader.readAsDataURL(blob);
+        };
+        recorder.onerror = function() {
+            stream.getTracks().forEach(function(t) { t.stop(); });
+            onEnd();
+        };
+        recorder.start();
+        window.__acpMediaRecorder = recorder;
+    }).catch(function() { onEnd(); });
+}""")
+private external fun startAudioRecording(onData: JsAny, onEnd: () -> Unit)
+
+@JsFun("() => { if (window.__acpMediaRecorder) { window.__acpMediaRecorder.stop(); window.__acpMediaRecorder = null; } }")
+private external fun stopAudioRecording()
+
 // ---- Date.now() / timers ----
 
 @JsFun("() => Date.now()")
@@ -389,6 +422,7 @@ private val pendingFiles = mutableListOf<FileAttachment>()
 private var formInitialized = false
 private var reconnectDelay = 1000 // ms, doubles on each failure up to 30s
 private var switchingAgent = false
+private var recording = false
 private var availableCommands = listOf<CommandInfo>()
 private var autocompleteFiltered = listOf<CommandInfo>()
 private var autocompleteSelectedIndex = -1
@@ -400,8 +434,8 @@ fun main() {
         installConsoleCapture()
     }
     setupAgentSelection()
-    // Only connect WebSocket if an agent is selected
-    if (document.body.hasAttribute("data-agent-id") == true) {
+    // Connect WebSocket if an agent is selected OR if we have a session ID (relay mode)
+    if (document.body.hasAttribute("data-agent-id") == true || document.body.hasAttribute("data-session-id") == true) {
         connect()
     }
 }
@@ -466,6 +500,14 @@ private fun onMessage(data: String) {
                     rmCls(cwdEl, Css.HIDDEN.toJsString())
                 }
             }
+
+            // Hide agent modal and loading overlay (agent is now connected)
+            val modal = byId(Id.AGENT_MODAL)
+            if (modal != null) addCls(modal, Css.HIDDEN.toJsString())
+            val loading = byId(Id.AGENT_LOADING)
+            if (loading != null) addCls(loading, Css.HIDDEN.toJsString())
+            switchingAgent = false
+
             // Clear messages before server replays history
             val messages = byId(Css.MESSAGES)
             if (messages != null) setHtml(messages, "".toJsString())
@@ -500,6 +542,7 @@ private fun onMessage(data: String) {
         }
         is WsMessage.Cancel -> {}
         is WsMessage.Diagnose -> {}
+        is WsMessage.ChangeAgent -> {}
     }
 }
 
@@ -594,6 +637,16 @@ private fun setupForm() {
         onChange(fileInput) { onFilesSelected(fileInput) }
     }
 
+    // Voice input button (audio recording)
+    val voiceBtn = byId(Id.VOICE_BTN)
+    if (voiceBtn != null) {
+        if (hasMediaRecorder().toBoolean()) {
+            onClick(voiceBtn) { toggleVoiceInput() }
+        } else {
+            addCls(voiceBtn, Css.HIDDEN.toJsString())
+        }
+    }
+
     // Drag-and-drop + paste on textarea
     onDrop(input, wrapDropCallback { dt -> onFilesDropped(dt) })
     onPasteFiles(input, wrapDropCallback { cb -> onFilesDropped(cb) })
@@ -660,6 +713,41 @@ private fun setupForm() {
             }
         })
     }
+}
+
+// ---- Voice input (audio recording) ----
+
+private fun toggleVoiceInput() {
+    val btn = byId(Id.VOICE_BTN) ?: return
+    if (recording) {
+        stopAudioRecording()
+        // UI reset happens in the onData/onEnd callbacks
+        return
+    }
+    recording = true
+    setCls(btn, "${Css.VOICE_BTN} ${Css.VOICE_BTN_ACTIVE}".toJsString())
+    startAudioRecording(
+        wrapTwoStringCallback { base64, mimeType ->
+            recording = false
+            val b = byId(Id.VOICE_BTN)
+            if (b != null) setCls(b, Css.VOICE_BTN.toJsString())
+
+            val data = base64.toString()
+            if (data.isEmpty()) return@wrapTwoStringCallback
+
+            val ext = if (mimeType.toString().contains("webm")) "webm" else "ogg"
+            val file = FileAttachment(name = "recording.$ext", mimeType = mimeType.toString(), data = data)
+
+            setInputEnabled(false)
+            startStatusTimer()
+            sendWs(WsMessage.Prompt("Do what is described in this audio file", null, listOf(file)))
+        },
+        {
+            recording = false
+            val b = byId(Id.VOICE_BTN)
+            if (b != null) setCls(b, Css.VOICE_BTN.toJsString())
+        },
+    )
 }
 
 // ---- Prompt ----
@@ -878,7 +966,8 @@ private fun changeAgent(agentId: String) {
 
     // POST to server to switch agent
     val body = """{"agentId":"$agentId"}"""
-    postJsonRequest("/api/change-agent".toJsString(), body.toJsString(), wrapStringCallback { result ->
+    val apiPath = "${location.pathname.trimEnd('/')}/api/change-agent"
+    postJsonRequest(apiPath.toJsString(), body.toJsString(), wrapStringCallback { result ->
         if (result.toString().startsWith("ok")) {
             // Reload page to get fresh state with new agent
             reloadPage()

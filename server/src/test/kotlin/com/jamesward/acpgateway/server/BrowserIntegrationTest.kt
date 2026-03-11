@@ -1,4 +1,5 @@
 package com.jamesward.acpgateway.server
+import com.jamesward.acpgateway.shared.*
 
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.model.*
