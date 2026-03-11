@@ -125,12 +125,14 @@ fun HTML.chatPage(
                             }
                         }
                     }
-                    label(classes = Css.SCREENSHOT_LABEL) {
-                        input(classes = Css.SCREENSHOT_CHECK) {
-                            id = Id.SCREENSHOT_TOGGLE
-                            type = InputType.checkBox
+                    if (debug) {
+                        label(classes = Css.SCREENSHOT_LABEL) {
+                            input(classes = Css.SCREENSHOT_CHECK) {
+                                id = Id.SCREENSHOT_TOGGLE
+                                type = InputType.checkBox
+                            }
+                            +"Screenshot"
                         }
-                        +"Screenshot"
                     }
                 }
             }
