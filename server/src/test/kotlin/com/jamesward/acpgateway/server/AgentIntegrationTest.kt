@@ -5,12 +5,8 @@ import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.model.PermissionOptionKind
 import com.jamesward.acpgateway.shared.FileAttachment
 import com.jamesward.acpgateway.shared.WsMessage
-import io.ktor.client.plugins.websocket.*
-import io.ktor.server.testing.*
-import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
-import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -24,8 +20,6 @@ import kotlin.test.assertTrue
  * Run with: ./gradlew :server:test --tests "*AgentIntegrationTest*"
  */
 class AgentIntegrationTest {
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     // Minimal 1x1 white PNG, valid base64
     private val tinyPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
@@ -281,23 +275,16 @@ class AgentIntegrationTest {
         }
         server.start(wait = false)
 
-        // Open a WebSocket connection (simulates browser)
-        val wsClient = java.net.http.HttpClient.newHttpClient()
-        val wsLatch = java.util.concurrent.CountDownLatch(1)
-        wsClient.newWebSocketBuilder()
-            .buildAsync(java.net.URI("ws://localhost:$port/ws"), object : java.net.http.WebSocket.Listener {
-                override fun onOpen(webSocket: java.net.http.WebSocket) {
-                    webSocket.request(Long.MAX_VALUE)
-                    wsLatch.countDown()
-                }
-                override fun onText(webSocket: java.net.http.WebSocket, data: CharSequence, last: Boolean): java.util.concurrent.CompletionStage<*>? {
-                    return null
-                }
-            })
-        assertTrue(wsLatch.await(10, java.util.concurrent.TimeUnit.SECONDS), "WebSocket should connect")
+        // Verify server is up via health check
+        val httpClient = java.net.http.HttpClient.newHttpClient()
+        val healthRequest = java.net.http.HttpRequest.newBuilder()
+            .uri(java.net.URI("http://localhost:$port/health"))
+            .GET()
+            .build()
+        val healthResponse = httpClient.send(healthRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
+        assertTrue(healthResponse.statusCode() == 200, "Health check should return 200")
 
         // Trigger reload via HTTP POST
-        val httpClient = java.net.http.HttpClient.newHttpClient()
         val reloadRequest = java.net.http.HttpRequest.newBuilder()
             .uri(java.net.URI("http://localhost:$port/reload"))
             .POST(java.net.http.HttpRequest.BodyPublishers.noBody())
@@ -315,50 +302,44 @@ class AgentIntegrationTest {
     @Test
     fun fullWebSocketRoundTripWithAttachment() {
         val env = skipIfNoAgent() ?: return
-        testApplication {
-            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
-            holder.manager = env.manager
-            application {
-                module(holder, GatewayMode.LOCAL)
-            }
-            val wsClient = createClient { install(WebSockets) }
-            wsClient.webSocket("/ws") {
+        runBlocking {
+            withTimeout(120_000) {
+                val input = kotlinx.coroutines.channels.Channel<WsMessage>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                val output = kotlinx.coroutines.channels.Channel<WsMessage>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
+                val handlerJob = launch {
+                    handleChatChannels(input, output, env.session, env.manager)
+                }
+
                 // Receive Connected
-                val connFrame = incoming.receive()
-                assertIs<Frame.Text>(connFrame)
-                val connMsg = json.decodeFromString(WsMessage.serializer(), connFrame.readText())
+                val connMsg = output.receive()
                 assertIs<WsMessage.Connected>(connMsg)
 
                 // Send prompt with image file
-                val prompt = WsMessage.Prompt(
+                input.send(WsMessage.Prompt(
                     text = "Respond with ONLY the word: received",
                     files = listOf(FileAttachment("test.png", "image/png", tinyPng)),
-                )
-                send(Frame.Text(json.encodeToString(WsMessage.serializer(), prompt)))
+                ))
 
                 // Collect until TurnComplete
-                // Server sends structured messages (AgentText, ToolCall, etc.).
-                // Permissions are auto-approved by the companion's approveJob at the SDK level.
                 var gotAgentMessage = false
                 var gotTurnComplete = false
-                withTimeout(120_000) {
-                    for (frame in incoming) {
-                        if (frame is Frame.Text) {
-                            val msg = json.decodeFromString(WsMessage.serializer(), frame.readText())
-                            when (msg) {
-                                is WsMessage.AgentText -> gotAgentMessage = true
-                                is WsMessage.ToolCall -> gotAgentMessage = true
-                                is WsMessage.TurnComplete -> {
-                                    gotTurnComplete = true
-                                    break
-                                }
-                                else -> {}
-                            }
+                for (msg in output) {
+                    when (msg) {
+                        is WsMessage.AgentText -> gotAgentMessage = true
+                        is WsMessage.ToolCall -> gotAgentMessage = true
+                        is WsMessage.TurnComplete -> {
+                            gotTurnComplete = true
+                            break
                         }
+                        else -> {}
                     }
                 }
                 assertTrue(gotTurnComplete, "Should receive TurnComplete")
                 assertTrue(gotAgentMessage, "Agent should produce messages")
+
+                input.close()
+                handlerJob.cancel()
             }
         }
     }

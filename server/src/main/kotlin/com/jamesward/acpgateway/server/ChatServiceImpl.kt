@@ -21,7 +21,7 @@ class ChatServiceImpl(
                 output.send(WsMessage.Connected("No agent selected", "", agentWorking = false))
                 if (holder.registry.isNotEmpty()) {
                     output.send(WsMessage.AvailableAgents(
-                        agents = holder.registry.map { AgentInfo(it.id, it.name) },
+                        agents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
                         currentAgentId = null,
                     ))
                     output.send(WsMessage.AvailableCommands(emptyList()))
@@ -46,7 +46,7 @@ class ChatServiceImpl(
                     debug = debug,
                     commandHandler = commandHandler,
                     internalCommands = internalCommands,
-                    availableAgents = holder.registry.map { AgentInfo(it.id, it.name) },
+                    availableAgents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
                     currentAgentId = holder.currentAgentId,
                 )
                 return // Normal exit (client disconnected)

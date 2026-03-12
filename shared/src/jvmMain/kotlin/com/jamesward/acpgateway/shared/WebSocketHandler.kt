@@ -21,6 +21,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import com.github.difflib.DiffUtils
 import com.github.difflib.UnifiedDiffUtils
+import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("WebSocketHandler")
@@ -173,13 +174,23 @@ suspend fun handleChatChannels(
         }
     }
 
-    session.connections.add(output)
+    // Check for ResumeFrom as first message (with short timeout)
+    var resumeFromSeq = 0L
+    var pendingMessage: WsMessage? = null
+    val firstMsg = withTimeoutOrNull(500) { input.receiveCatching().getOrNull() }
+    if (firstMsg is WsMessage.ResumeFrom) {
+        resumeFromSeq = firstMsg.lastSeq
+        logger.info("Client resuming from seq={}", resumeFromSeq)
+    } else if (firstMsg != null) {
+        // Not a ResumeFrom — save it so we don't lose it
+        pendingMessage = firstMsg
+    }
 
     try {
         val promptStartTime = session.store.getPromptStartTime(session.id)
         val isWorking = promptStartTime > 0L
 
-        output.send(WsMessage.Connected(manager.agentName, manager.agentVersion, session.cwd, agentWorking = isWorking))
+        output.send(WsMessage.Connected(manager.agentName, manager.agentVersion, session.cwd, agentWorking = isWorking, seq = session.currentSeq))
 
         if (availableAgents.isNotEmpty()) {
             output.send(WsMessage.AvailableAgents(availableAgents, currentAgentId))
@@ -190,41 +201,70 @@ suspend fun handleChatChannels(
             output.send(WsMessage.AvailableCommands(session.allCommands))
         }
 
-        // Replay history as structured messages
-        for (entry in session.store.getHistory(session.id)) {
-            if (entry.role == "user") {
-                output.send(WsMessage.UserMessage(entry.content))
-            } else {
-                output.send(WsMessage.AgentText(msgId = "history-${entry.timestamp}", markdown = entry.content))
-                output.send(WsMessage.TurnComplete("end_turn"))
-            }
-        }
+        // Check if we can do a delta resume from the turn buffer
+        val bufferedMessages = if (resumeFromSeq > 0) session.getTurnBufferSince(resumeFromSeq) else emptyList()
+        val canResume = resumeFromSeq > 0 && bufferedMessages.isNotEmpty()
 
-        // Replay current turn's in-progress state for reconnecting clients
-        if (isWorking) {
-            val turnState = session.store.getTurnState(session.id)
-            if (turnState != null) {
-                if (turnState.thoughtText.isNotBlank()) {
-                    output.send(WsMessage.AgentThought(thoughtId = turnState.thoughtId, markdown = turnState.thoughtText))
+        if (canResume) {
+            // Delta resume: replay only missed messages from the turn buffer
+            for (seqMsg in bufferedMessages) {
+                output.send(seqMsg.message)
+            }
+        } else {
+            // Full replay: send complete history
+            for (entry in session.store.getHistory(session.id)) {
+                if (entry.role == "user") {
+                    output.send(WsMessage.UserMessage(entry.content, fileNames = entry.fileNames ?: emptyList()))
+                } else {
+                    if (entry.thought != null) {
+                        output.send(WsMessage.AgentThought(thoughtId = "history-thought-${entry.timestamp}", markdown = entry.thought))
+                    }
+                    if (entry.toolCalls != null) {
+                        for (tc in entry.toolCalls) {
+                            output.send(WsMessage.ToolCall(
+                                toolCallId = tc.id,
+                                title = tc.title,
+                                status = tc.status,
+                                content = tc.content.ifEmpty { null },
+                                contentHtml = tc.contentHtml.ifEmpty { null },
+                                kind = tc.kind,
+                                location = tc.location,
+                            ))
+                        }
+                    }
+                    if (entry.content.isNotEmpty()) {
+                        output.send(WsMessage.AgentText(msgId = "history-${entry.timestamp}", markdown = entry.content, usage = entry.usage))
+                    }
+                    output.send(WsMessage.TurnComplete("end_turn"))
                 }
-                if (turnState.responseText.isNotBlank()) {
-                    output.send(WsMessage.AgentText(msgId = turnState.msgId, markdown = turnState.responseText))
-                }
-                for (toolEntry in turnState.toolEntries) {
-                    output.send(WsMessage.ToolCall(
-                        toolCallId = toolEntry.id,
-                        title = toolEntry.title,
-                        status = toolEntry.status,
-                        content = toolEntry.content.ifEmpty { null },
-                        contentHtml = toolEntry.contentHtml.ifEmpty { null },
-                        kind = toolEntry.kind,
-                        location = toolEntry.location,
-                    ))
-                }
-            } else {
-                val toolCalls = session.store.getToolCalls(session.id)
-                for ((id, info) in toolCalls) {
-                    output.send(WsMessage.ToolCall(toolCallId = id, title = info.title, status = info.status))
+            }
+
+            // Replay current turn's in-progress state for reconnecting clients (full replay only)
+            if (isWorking) {
+                val turnState = session.store.getTurnState(session.id)
+                if (turnState != null) {
+                    if (turnState.thoughtText.isNotBlank()) {
+                        output.send(WsMessage.AgentThought(thoughtId = turnState.thoughtId, markdown = turnState.thoughtText))
+                    }
+                    if (turnState.responseText.isNotBlank()) {
+                        output.send(WsMessage.AgentText(msgId = turnState.msgId, markdown = turnState.responseText))
+                    }
+                    for (toolEntry in turnState.toolEntries) {
+                        output.send(WsMessage.ToolCall(
+                            toolCallId = toolEntry.id,
+                            title = toolEntry.title,
+                            status = toolEntry.status,
+                            content = toolEntry.content.ifEmpty { null },
+                            contentHtml = toolEntry.contentHtml.ifEmpty { null },
+                            kind = toolEntry.kind,
+                            location = toolEntry.location,
+                        ))
+                    }
+                } else {
+                    val toolCalls = session.store.getToolCalls(session.id)
+                    for ((id, info) in toolCalls) {
+                        output.send(WsMessage.ToolCall(toolCallId = id, title = info.title, status = info.status))
+                    }
                 }
             }
         }
@@ -235,64 +275,28 @@ suspend fun handleChatChannels(
             output.send(pendingPerm)
         }
 
+        // Add to broadcast set AFTER replay to avoid interleaving live broadcasts with history
+        session.connections.add(output)
+
+        // Check if the prompt completed during replay — if so, send the missed TurnComplete
+        val stillWorking = session.store.getPromptStartTime(session.id) > 0L
+        if (isWorking && !stillWorking) {
+            output.send(WsMessage.TurnComplete("end_turn"))
+        }
+
         if (autoPromptText != null) {
             session.promptJob = session.scope.launch {
                 handlePrompt(WsMessage.Prompt(autoPromptText), session, debug)
             }
         }
 
+        // Process any message that was read during ResumeFrom check
+        if (pendingMessage != null) {
+            handleClientMessage(pendingMessage, session, debug, commandHandler, output)
+        }
+
         for (wsMsg in input) {
-            when (wsMsg) {
-                is WsMessage.Prompt -> {
-                    logger.info("Received prompt: screenshot={}, files={}", wsMsg.screenshot != null, wsMsg.files.size)
-                    session.promptJob = session.scope.launch { handlePrompt(wsMsg, session, debug, commandHandler) }
-                }
-                is WsMessage.Cancel -> {
-                    session.cancelPrompt()
-                    withTimeoutOrNull(5000) { session.promptJob?.join() }
-                    session.promptJob?.cancel()
-                    session.promptJob = null
-                    session.activePermission = null
-                    session.store.clearToolCalls(session.id)
-                    session.store.setPromptStartTime(session.id, 0L)
-                    session.store.clearTurnState(session.id)
-                    session.broadcast(WsMessage.TurnComplete("cancelled"))
-                }
-                is WsMessage.Diagnose -> {
-                    val diagnosticText = session.buildDiagnosticContext()
-                    session.cancelPrompt()
-                    withTimeoutOrNull(5000) { session.promptJob?.join() }
-                    session.promptJob?.cancel()
-                    session.promptJob = null
-                    session.activePermission = null
-                    session.store.clearToolCalls(session.id)
-                    session.store.setPromptStartTime(session.id, 0L)
-                    session.store.clearTurnState(session.id)
-                    session.broadcast(WsMessage.TurnComplete("cancelled"))
-                    session.promptJob = session.scope.launch {
-                        handlePrompt(WsMessage.Prompt(diagnosticText), session, debug)
-                    }
-                }
-                is WsMessage.PermissionResponse -> {
-                    handlePermissionResponse(wsMsg, session)
-                    session.activePermission = null
-                }
-                is WsMessage.BrowserStateResponse -> {
-                    session.clientOps.completeBrowserState(wsMsg.requestId, wsMsg.state)
-                }
-                is WsMessage.ChangeAgent -> {
-                    logger.info("Received ChangeAgent: {}", wsMsg.agentId)
-                    session.cancelPrompt()
-                    withTimeoutOrNull(5000) { session.promptJob?.join() }
-                    session.promptJob?.cancel()
-                    session.promptJob = null
-                    session.store.clearToolCalls(session.id)
-                    session.store.setPromptStartTime(session.id, 0L)
-                    session.store.clearTurnState(session.id)
-                    throw AgentSwitchException(wsMsg.agentId)
-                }
-                else -> logger.warn("Unexpected message from browser: {}", wsMsg)
-            }
+            handleClientMessage(wsMsg, session, debug, commandHandler, output)
         }
     } finally {
         session.connections.remove(output)
@@ -350,6 +354,73 @@ suspend fun WebSocketSession.handleChatWebSocket(
     }
 }
 
+private suspend fun handleClientMessage(
+    wsMsg: WsMessage,
+    session: GatewaySession,
+    debug: Boolean,
+    commandHandler: CommandHandler?,
+    output: SendChannel<WsMessage>,
+) {
+    when (wsMsg) {
+        is WsMessage.Prompt -> {
+            logger.info("Received prompt: screenshot={}, files={}", wsMsg.screenshot != null, wsMsg.files.size)
+            session.promptJob = session.scope.launch { handlePrompt(wsMsg, session, debug, commandHandler) }
+        }
+        is WsMessage.Cancel -> {
+            session.cancelPrompt()
+            withTimeoutOrNull(5000) { session.promptJob?.join() }
+            session.promptJob?.cancel()
+            session.promptJob = null
+            session.activePermission = null
+            session.store.clearToolCalls(session.id)
+            session.store.setPromptStartTime(session.id, 0L)
+            session.store.clearTurnState(session.id)
+            session.broadcast(WsMessage.TurnComplete("cancelled"))
+            session.clearTurnBuffer()
+        }
+        is WsMessage.Diagnose -> {
+            val diagnosticText = session.buildDiagnosticContext()
+            session.cancelPrompt()
+            withTimeoutOrNull(5000) { session.promptJob?.join() }
+            session.promptJob?.cancel()
+            session.promptJob = null
+            session.activePermission = null
+            session.store.clearToolCalls(session.id)
+            session.store.setPromptStartTime(session.id, 0L)
+            session.store.clearTurnState(session.id)
+            session.broadcast(WsMessage.TurnComplete("cancelled"))
+            session.clearTurnBuffer()
+            session.promptJob = session.scope.launch {
+                handlePrompt(WsMessage.Prompt(diagnosticText), session, debug)
+            }
+        }
+        is WsMessage.PermissionResponse -> {
+            handlePermissionResponse(wsMsg, session)
+            session.activePermission = null
+            session.broadcast(wsMsg)
+        }
+        is WsMessage.BrowserStateResponse -> {
+            session.clientOps.completeBrowserState(wsMsg.requestId, wsMsg.state)
+        }
+        is WsMessage.ChangeAgent -> {
+            logger.info("Received ChangeAgent: {}", wsMsg.agentId)
+            session.cancelPrompt()
+            withTimeoutOrNull(5000) { session.promptJob?.join() }
+            session.promptJob?.cancel()
+            session.promptJob = null
+            session.store.clearToolCalls(session.id)
+            session.store.setPromptStartTime(session.id, 0L)
+            session.store.clearTurnState(session.id)
+            session.clearTurnBuffer()
+            throw AgentSwitchException(wsMsg.agentId)
+        }
+        is WsMessage.ResumeFrom -> {
+            logger.debug("Ignoring ResumeFrom mid-session: lastSeq={}", wsMsg.lastSeq)
+        }
+        else -> logger.warn("Unexpected message from browser: {}", wsMsg)
+    }
+}
+
 @OptIn(UnstableApi::class)
 private suspend fun handlePrompt(
     prompt: WsMessage.Prompt,
@@ -357,6 +428,7 @@ private suspend fun handlePrompt(
     debug: Boolean = false,
     commandHandler: CommandHandler? = null,
 ) {
+    session.promptMutex.withLock {
     try {
         session.store.setPromptStartTime(session.id, System.currentTimeMillis())
         session.store.clearToolCalls(session.id)
@@ -368,7 +440,7 @@ private suspend fun handlePrompt(
         }
 
         // Send user message to all clients
-        session.broadcast(WsMessage.UserMessage(prompt.text))
+        session.broadcast(WsMessage.UserMessage(prompt.text, fileNames = prompt.files.map { it.name }))
 
         val events = if (debug && effectivePrompt.text.trim() == "/simulate") {
             buildSimulationResponse()()
@@ -380,6 +452,7 @@ private suspend fun handlePrompt(
         val turnCounter = System.currentTimeMillis()
         val toolEntries = mutableListOf<ToolCallDisplay>()
         val usage = UsageState()
+        var stopReason: String? = null
         val msgId = "msg-$turnCounter"
         val thoughtId = "thought-$turnCounter"
         val toolBlockId = "tools-$turnCounter"
@@ -403,7 +476,8 @@ private suspend fun handlePrompt(
                                 responseText.append(content.text)
                                 if (responseText.isNotBlank()) {
                                     val usageStr = usage.formatUsage()
-                                    session.broadcast(WsMessage.AgentText(msgId = msgId, markdown = responseText.toString(), usage = usageStr))
+                                    // Send only the new chunk (delta), not full accumulated text
+                                    session.broadcast(WsMessage.AgentText(msgId = msgId, markdown = content.text, usage = usageStr))
                                     updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
                                 }
                             }
@@ -414,7 +488,8 @@ private suspend fun handlePrompt(
                                 thoughtText.append(content.text)
                                 if (thoughtText.isNotBlank()) {
                                     val usageStr = usage.formatUsage()
-                                    session.broadcast(WsMessage.AgentThought(thoughtId = thoughtId, markdown = thoughtText.toString(), usage = usageStr))
+                                    // Send only the new chunk (delta), not full accumulated text
+                                    session.broadcast(WsMessage.AgentThought(thoughtId = thoughtId, markdown = content.text, usage = usageStr))
                                     updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
                                 }
                             }
@@ -495,11 +570,12 @@ private suspend fun handlePrompt(
                                 usage.cost = CostInfo(cost.amount, cost.currency)
                             }
                             val usageStr = usage.formatUsage()
+                            // Send empty delta with updated usage
                             if (responseText.isNotBlank()) {
-                                session.broadcast(WsMessage.AgentText(msgId = msgId, markdown = responseText.toString(), usage = usageStr))
+                                session.broadcast(WsMessage.AgentText(msgId = msgId, markdown = "", usage = usageStr))
                             }
                             if (thoughtText.isNotBlank()) {
-                                session.broadcast(WsMessage.AgentThought(thoughtId = thoughtId, markdown = thoughtText.toString(), usage = usageStr))
+                                session.broadcast(WsMessage.AgentThought(thoughtId = thoughtId, markdown = "", usage = usageStr))
                             }
                         }
                         is SessionUpdate.AvailableCommandsUpdate -> {
@@ -518,28 +594,32 @@ private suspend fun handlePrompt(
                 }
                 is Event.PromptResponseEvent -> {
                     val response = event.response
-                    session.store.clearToolCalls(session.id)
-                    session.store.setPromptStartTime(session.id, 0L)
-                    session.store.clearTurnState(session.id)
-                    if (responseText.isNotEmpty()) {
-                        session.store.addHistory(session.id,
-                            ChatEntry(
-                                role = "assistant",
-                                content = responseText.toString(),
-                                timestamp = System.currentTimeMillis(),
-                            )
+                    stopReason = response.stopReason.name.lowercase()
+                    val usageStr = usage.formatUsage()
+                    session.store.addHistory(session.id,
+                        ChatEntry(
+                            role = "assistant",
+                            content = responseText.toString(),
+                            thought = thoughtText.toString().ifEmpty { null },
+                            toolCalls = toolEntries.toList().ifEmpty { null },
+                            usage = usageStr,
+                            timestamp = System.currentTimeMillis(),
                         )
-                        val usageStr = usage.formatUsage()
-                        session.broadcast(WsMessage.AgentText(msgId = msgId, markdown = responseText.toString(), usage = usageStr))
-                    }
-                    session.broadcast(WsMessage.TurnComplete(response.stopReason.name.lowercase()))
+                    )
                 }
             }
         }
+        // Flow is fully consumed — now safe to signal turn complete and release the mutex
+        session.store.clearToolCalls(session.id)
+        session.store.setPromptStartTime(session.id, 0L)
+        session.store.clearTurnState(session.id)
+        session.broadcast(WsMessage.TurnComplete(stopReason ?: "end_turn"))
+        session.clearTurnBuffer()
     } catch (e: CancellationException) {
         session.store.clearToolCalls(session.id)
         session.store.setPromptStartTime(session.id, 0L)
         session.store.clearTurnState(session.id)
+        session.clearTurnBuffer()
         throw e
     } catch (e: Exception) {
         session.store.clearToolCalls(session.id)
@@ -548,7 +628,9 @@ private suspend fun handlePrompt(
         logger.error("Error processing prompt", e)
         session.broadcast(WsMessage.Error(e.message ?: "Unknown error"))
         session.broadcast(WsMessage.TurnComplete("error"))
+        session.clearTurnBuffer()
     }
+    } // promptMutex.withLock
 }
 
 private suspend fun updateTurnState(

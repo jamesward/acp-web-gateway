@@ -28,7 +28,7 @@ web/      — Kotlin/WasmJS Kilua composable UI. Pure Compose-style components, 
 - `Registry.kt` — Fetches ACP agent registry, resolves agent distribution (npx/uvx/binary) to a `ProcessCommand`.
 
 ### web
-- `App.kt` — Kilua composable UI. Pure Compose-style components using `mutableStateOf` for reactive state. Kilua RPC `getService<IChatService>().chat {}` for typed WS communication. Minimal `@JsFun` bridges only for relay WS and RPC URL prefix. Kilua form `textArea` with two-way value binding.
+- `App.kt` — Kilua composable UI. Pure Compose-style components using `mutableStateOf` for reactive state. Kilua RPC `getService<IChatService>().chat {}` for typed WS communication. `@JsFun` bridges for console capture, DOM state collection, scroll management, and file download. Handles `BrowserStateRequest` messages for server-side browser debugging. Kilua form `textArea` with two-way value binding.
 
 ## Build & Run
 
@@ -69,25 +69,35 @@ The server's `processResources` task automatically runs `:web:wasmJsBrowserDevel
 - **ACP communication**: Server spawns agent as subprocess, communicates via stdio using the ACP Kotlin SDK's `StdioTransport` → `Protocol` → `Client` → `ClientSession`.
 - **Browser communication**: Browser connects via Kilua RPC (typed WebSocket channels). Server sends structured `WsMessage` types (AgentText, AgentThought, ToolCall, etc.). Client renders UI using Kilua composables with reactive state.
 - **Permissions**: Agent requests permissions via `ClientSessionOperations.requestPermissions()` which suspends on a `CompletableDeferred`. Server sends `PermissionRequest` message. Client renders permission dialog as a Kilua composable and sends `PermissionResponse` back via RPC channel.
-- **Debug mode**: `--debug` flag sets `data-debug="true"` on `<body>`, enables the Diagnose button for stuck-task diagnostics.
+- **Debug mode**: `--debug` flag sets `data-debug="true"` on `<body>`, enables Screenshot checkbox, Download Log button, and Diagnose button.
 - **Browser debugging**: When working on the gateway via itself (agent is claude-code), the ACP agent can investigate client-side state and errors. Three mechanisms are available:
-  1. **`browser://` virtual files** — Read browser state via the `Read` tool (routed through `fsReadTextFile`):
-     - `browser://console` — Last 50 console log entries (log/warn/error with timestamps)
-     - `browser://dom` — DOM state summary (message count, WebSocket state, viewport size, permission dialog visibility, etc.)
-     - `browser://all` — Both console logs and DOM state combined
-  2. **Screenshot checkbox** — User checks "Screenshot" next to Send. Captures a real PNG screenshot via SVG foreignObject (clones messages DOM, embeds CSS, renders to canvas, extracts base64 PNG). Sent as `ContentBlock.Image` to the agent.
-  3. **Diagnose button** — Visible in debug mode (`--debug`) while the agent is working. Cancels the current task, collects browser state (console + DOM), and re-sends everything as a diagnostic prompt.
+  1. **`browser://` virtual files** — Read browser state via the `Read` tool (routed through ACP's `fsReadTextFile` → `GatewayClientOperations` → `BrowserStateRequest` WsMessage → client-side JS collection → `BrowserStateResponse`):
+     - `browser://console` — Last 50 console log entries (log/warn/error with timestamps). Client installs console interceptors at startup via `installConsoleCapture()`.
+     - `browser://dom` — DOM state summary: message count, viewport size, permission dialog visibility, page title, body classes, URL.
+     - `browser://all` — Both console logs and DOM state combined as JSON.
+  2. **Screenshot checkbox** — Visible in debug mode. User checks "Screenshot" next to Send. Captures a PNG screenshot via `html2canvas` (renders DOM to canvas, extracts base64 PNG). Sent as `ContentBlock.Image` to the agent.
+  3. **Diagnose button** — Visible in debug mode while the agent is working. Cancels the current task, calls `buildDiagnosticContext()` which collects browser state (console + DOM), session state (elapsed time, active tool calls, pending permissions, recent history), and re-sends everything as a diagnostic prompt.
 
-  **When to use which**: If you suspect a client-side issue, ask the user to check the Screenshot box and describe the problem — or read `browser://console` directly to check for JS errors. For stuck-task issues, the user can click Diagnose.
+  **How `browser://` reads work end-to-end**:
+  1. Agent calls `fsReadTextFile("browser://console")` via ACP protocol
+  2. `GatewayClientOperations.fsReadTextFile()` intercepts the `browser://` prefix
+  3. Creates a `CompletableDeferred` and sends `BrowserStateRequestInternal` to a channel
+  4. `GatewaySession.startEventForwarding()` picks it up, sends `WsMessage.BrowserStateRequest` to the first connected client
+  5. Client's `onMessage` handler calls `collectBrowserState()` which invokes JS functions (`getConsoleLogs()`, `getDomState()`)
+  6. Client sends back `WsMessage.BrowserStateResponse` with collected JSON
+  7. Server completes the deferred, `fsReadTextFile` returns the state as file content
+  8. Times out after 10 seconds if the browser doesn't respond
+
+  **When to use which**: If you suspect a client-side issue, read `browser://console` directly to check for JS errors. For visual issues, ask the user to check the Screenshot box. For stuck-task issues, the user can click Diagnose.
 
   **IMPORTANT — Always debug UI issues before guessing at fixes**: When any UI behavior is wrong (elements not appearing, wrong content, layout issues, interactions broken), you MUST investigate client-side state before making code changes:
-  1. **First**: Read `browser://console` to check for JavaScript errors. JS errors in the WASM client or idiomorph can silently break rendering.
-  2. **Second**: Read `browser://dom` to check DOM state (message count, WebSocket readyState, permission dialog visibility, etc.).
+  1. **First**: Read `browser://console` to check for JavaScript errors. JS errors in the WASM client can silently break rendering.
+  2. **Second**: Read `browser://dom` to check DOM state (message count, permission dialog visibility, etc.).
   3. **Third**: Ask the user to send a Screenshot if the issue is visual (layout, styling, missing elements).
-  4. **If `browser://` reads fail or time out**: The `browser://` reads only work when the agent's file reads are routed through the ACP protocol's `fsReadTextFile`. If they return "File does not exist" or time out, ask the user to open browser DevTools (F12) and paste console errors directly. The browser may be unresponsive, or the ACP file routing may not be active.
-  5. **If a permission dialog blocks the read**: The `browser://` reads may trigger an ACP permission prompt. If the browser is unresponsive, this creates a deadlock. Ask the user to refresh and share console output manually.
+  4. **If `browser://` reads fail or time out**: The reads only work when the agent's file reads are routed through ACP's `fsReadTextFile`. If they return "File does not exist" or time out, ask the user to open browser DevTools (F12) and paste console errors directly.
+  5. **If a permission dialog blocks the read**: The reads may trigger an ACP permission prompt. If the browser is unresponsive, this creates a deadlock. Ask the user to refresh and share console output manually.
 
-  **Do NOT** skip debugging and jump to speculative code fixes for UI issues. The server-side HTML generation (Fragments.kt) and the client-side DOM patching (App.kt via idiomorph) are two separate layers — verify which layer has the bug before changing code.
+  **Do NOT** skip debugging and jump to speculative code fixes for UI issues. Verify which layer has the bug (server-side message flow vs client-side Kilua composable rendering) before changing code.
 
 ## Testing
 
@@ -130,7 +140,7 @@ Do NOT fix UI bugs without a test. If you can't write a test first, explain why 
 - Events: `onClick`, `onInput`, `onKeydown`, `onEvent<EventType>("eventname")` — all composable.
 - Kilua RPC: `getService<IChatService>().chat { sendChannel, receiveChannel -> ... }` for typed WebSocket channels.
 - `setRpcUrlPrefix(prefix)` must be called before connecting in proxy mode to route to the correct session path.
-- Minimal `@JsFun` bridges: only for relay WS callbacks and `setRpcUrlPrefix`. No DOM manipulation.
+- `@JsFun` bridges for: relay WS, `setRpcUrlPrefix`, console capture (`installConsoleCapture`, `getConsoleLogs`), DOM state (`getDomState`), scroll management (`isMessagesAtBottom`, `scrollMessagesToBottom`, `installScrollListener`, `readScrollAtBottom`), and file download (`downloadTextFile`).
 
 ### Kotlin/Wasm (web module)
 - Requires `@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)`.

@@ -15,5 +15,6 @@
   - Option A: Use `./gradlew :server:runShadow` (already available via Ktor plugin, zero changes, but slower startup due to fat jar build)
   - Option B: Add a custom `runJar` task that depends on the `jar` task and runs from the built jar + dependency jars instead of loose class files (fast, isolated from recompilation)
 
+- <tool_use_error>Cancelled: parallel tool call WebFetch errored</tool_use_error>
 
-JS Interop: https://kilua.dev/development-guide/interoperability-with-javascript
+- The file diff renderer is or was on the server side. we need to move it to the client side.

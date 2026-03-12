@@ -27,10 +27,28 @@ import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 data class ToolCallInfo(val title: String, val status: ToolStatus, val startTime: Long)
 
+/** A WsMessage tagged with a monotonic sequence number. */
+data class SeqMessage(val seq: Long, val message: WsMessage)
+
 private val broadcastJson = Json { ignoreUnknownKeys = true }
+
+private val textFileExtensions = setOf(
+    "md", "markdown", "txt", "csv", "tsv", "json", "yaml", "yml", "toml",
+    "xml", "html", "htm", "css", "js", "ts", "jsx", "tsx", "kt", "kts",
+    "java", "py", "rb", "rs", "go", "c", "h", "cpp", "hpp", "cs", "swift",
+    "sh", "bash", "zsh", "fish", "bat", "ps1", "sql", "graphql", "gql",
+    "ini", "cfg", "conf", "properties", "env", "log", "svg", "tex", "r",
+    "scala", "groovy", "gradle", "cmake", "makefile", "dockerfile",
+)
+
+private fun FileAttachment.isLikelyText(): Boolean {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return ext in textFileExtensions
+}
 
 class GatewaySession(
     val id: UUID,
@@ -41,7 +59,7 @@ class GatewaySession(
     val store: SessionStore,
 ) {
     private val logger = LoggerFactory.getLogger(GatewaySession::class.java)
-    private val promptMutex = Mutex()
+    internal val promptMutex = Mutex()
 
     @Volatile
     var ready: Boolean = false
@@ -66,11 +84,56 @@ class GatewaySession(
     /** All commands: internal + agent-provided. */
     val allCommands: List<CommandInfo> get() = internalCommands + availableCommands
 
+    // ---- Sequence-based delta streaming ----
+
+    /** Monotonic sequence counter for outbound messages. */
+    private val seqCounter = AtomicLong(0)
+
+    /** Current turn's message buffer for reconnecting clients. Cleared on TurnComplete. */
+    private val turnBuffer = mutableListOf<SeqMessage>()
+    private val turnBufferLock = Any()
+
+    /** Get the current sequence number (last assigned). */
+    val currentSeq: Long get() = seqCounter.get()
+
+    /** Get a snapshot of the current turn buffer from a given sequence number (exclusive). */
+    fun getTurnBufferSince(afterSeq: Long): List<SeqMessage> {
+        synchronized(turnBufferLock) {
+            return turnBuffer.filter { it.seq > afterSeq }.toList()
+        }
+    }
+
+    /** Clear the turn buffer (called on TurnComplete). */
+    fun clearTurnBuffer() {
+        synchronized(turnBufferLock) {
+            turnBuffer.clear()
+        }
+    }
+
+    /** Stamp a WsMessage with its assigned sequence number. */
+    private fun withSeq(msg: WsMessage, seq: Long): WsMessage = when (msg) {
+        is WsMessage.AgentText -> msg.copy(seq = seq)
+        is WsMessage.AgentThought -> msg.copy(seq = seq)
+        is WsMessage.ToolCall -> msg.copy(seq = seq)
+        is WsMessage.TurnComplete -> msg.copy(seq = seq)
+        is WsMessage.UserMessage -> msg.copy(seq = seq)
+        is WsMessage.Error -> msg.copy(seq = seq)
+        is WsMessage.Connected -> msg.copy(seq = seq)
+        else -> msg // Client→server or metadata messages don't need seq
+    }
+
     suspend fun broadcast(msg: WsMessage) {
+        val seq = seqCounter.incrementAndGet()
+        val stamped = withSeq(msg, seq)
+        val seqMsg = SeqMessage(seq, stamped)
+        synchronized(turnBufferLock) {
+            turnBuffer.add(seqMsg)
+        }
+
         val dead = mutableListOf<SendChannel<WsMessage>>()
         for (conn in connections) {
             try {
-                conn.send(msg)
+                conn.send(stamped)
             } catch (_: Exception) {
                 dead.add(conn)
             }
@@ -145,29 +208,36 @@ class GatewaySession(
     }
 
     suspend fun prompt(text: String, screenshot: String? = null, files: List<FileAttachment> = emptyList()): Flow<Event> {
-        return promptMutex.withLock {
-            store.addHistory(id, ChatEntry(role = "user", content = text, timestamp = System.currentTimeMillis()))
-            val contentBlocks = buildList {
-                if (screenshot != null) {
-                    add(ContentBlock.Image(data = screenshot, mimeType = "image/png"))
-                }
-                for (file in files) {
-                    if (file.mimeType.startsWith("image/")) {
-                        add(ContentBlock.Image(data = file.data, mimeType = file.mimeType))
-                    } else {
-                        add(ContentBlock.Resource(
-                            resource = EmbeddedResourceResource.BlobResourceContents(
-                                blob = file.data,
-                                uri = "file:///${file.name}",
-                                mimeType = file.mimeType,
-                            )
-                        ))
-                    }
-                }
-                add(ContentBlock.Text(text))
+        store.addHistory(id, ChatEntry(role = "user", content = text, timestamp = System.currentTimeMillis(), fileNames = files.map { it.name }.ifEmpty { null }))
+        val contentBlocks = buildList {
+            if (screenshot != null) {
+                add(ContentBlock.Image(data = screenshot, mimeType = "image/png"))
             }
-            clientSession.prompt(contentBlocks)
+
+            for (file in files) {
+                logger.info("File attachment: {} {} {}", file.name, file.mimeType, file.data.length)
+
+                if (file.mimeType.startsWith("image/")) {
+                    add(ContentBlock.Image(data = file.data, mimeType = file.mimeType))
+                } else {
+                    val embeddedResource = if (file.mimeType.startsWith("text/") || file.isLikelyText()) {
+                        val decoded = java.util.Base64.getDecoder().decode(file.data).toString(Charsets.UTF_8)
+                        EmbeddedResourceResource.TextResourceContents(decoded, "file:///${file.name}", file.mimeType)
+                    } else {
+                        EmbeddedResourceResource.BlobResourceContents(
+                            blob = file.data,
+                            uri = "file:///${file.name}",
+                            mimeType = file.mimeType,
+                        )
+                    }
+
+                    add(ContentBlock.Resource(embeddedResource))
+                }
+            }
+
+            add(ContentBlock.Text(text))
         }
+        return clientSession.prompt(contentBlocks)
     }
 
     suspend fun buildDiagnosticContext(): String {

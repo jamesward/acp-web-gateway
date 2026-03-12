@@ -180,18 +180,53 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithNonImageFileSendsContentBlockResource() = testApp { _, fakeSession, session, manager ->
+    fun promptWithTextFileInlinesContentIntoTextBlock() = testApp { _, fakeSession, session, manager ->
         val prompt = WsMessage.Prompt(
             text = "analyze this",
-            files = listOf(FileAttachment("data.csv", "text/csv", "bmFtZSxhZ2U=")),
+            files = listOf(FileAttachment("data.csv", "text/csv", "bmFtZSxhZ2U=")), // "name,age"
+        )
+        val blocks = sendPromptAndGetContentBlocks(prompt, fakeSession, session, manager)
+        // Text files should be inlined into the Text block, not sent as Resource
+        val resources = blocks.filterIsInstance<ContentBlock.Resource>()
+        assertEquals(0, resources.size, "Text files should not produce Resource blocks")
+        val texts = blocks.filterIsInstance<ContentBlock.Text>()
+        assertEquals(1, texts.size)
+        assertTrue(texts[0].text.contains("[File: data.csv]"), "Should contain file header")
+        assertTrue(texts[0].text.contains("name,age"), "Should contain decoded file content")
+        assertTrue(texts[0].text.contains("analyze this"), "Should contain original prompt")
+    }
+
+    @Test
+    fun promptWithTxtFileInlinesContent() = testApp { _, fakeSession, session, manager ->
+        // "Hello world" in base64
+        val base64Content = java.util.Base64.getEncoder().encodeToString("Hello world".toByteArray())
+        val prompt = WsMessage.Prompt(
+            text = "read this file",
+            files = listOf(FileAttachment("notes.txt", "text/plain", base64Content)),
+        )
+        val blocks = sendPromptAndGetContentBlocks(prompt, fakeSession, session, manager)
+        val resources = blocks.filterIsInstance<ContentBlock.Resource>()
+        assertEquals(0, resources.size, "text/plain files should not produce Resource blocks")
+        val texts = blocks.filterIsInstance<ContentBlock.Text>()
+        assertEquals(1, texts.size)
+        assertTrue(texts[0].text.contains("[File: notes.txt]"))
+        assertTrue(texts[0].text.contains("Hello world"))
+        assertTrue(texts[0].text.contains("read this file"))
+    }
+
+    @Test
+    fun promptWithBinaryNonImageFileSendsContentBlockResource() = testApp { _, fakeSession, session, manager ->
+        val prompt = WsMessage.Prompt(
+            text = "analyze this",
+            files = listOf(FileAttachment("report.pdf", "application/pdf", "cmVwb3J0")),
         )
         val blocks = sendPromptAndGetContentBlocks(prompt, fakeSession, session, manager)
         val resources = blocks.filterIsInstance<ContentBlock.Resource>()
         assertEquals(1, resources.size, "Should have 1 resource content block")
         val blob = assertIs<EmbeddedResourceResource.BlobResourceContents>(resources[0].resource)
-        assertEquals("bmFtZSxhZ2U=", blob.blob)
-        assertEquals("text/csv", blob.mimeType)
-        assertEquals("file:///data.csv", blob.uri)
+        assertEquals("cmVwb3J0", blob.blob)
+        assertEquals("application/pdf", blob.mimeType)
+        assertEquals("file:///report.pdf", blob.uri)
     }
 
     @Test
@@ -222,6 +257,47 @@ class ServerTest {
         val blob = assertIs<EmbeddedResourceResource.BlobResourceContents>(resources[0].resource)
         assertEquals("cmVwb3J0", blob.blob)
         assertEquals("application/pdf", blob.mimeType)
+    }
+
+    @Test
+    fun promptWithMixedTextAndBinaryFiles() = testApp { _, fakeSession, session, manager ->
+        val csvBase64 = java.util.Base64.getEncoder().encodeToString("name,age".toByteArray())
+        val prompt = WsMessage.Prompt(
+            text = "analyze all",
+            files = listOf(
+                FileAttachment("data.csv", "text/csv", csvBase64),
+                FileAttachment("photo.png", "image/png", "iVBORw0KGgo="),
+                FileAttachment("doc.pdf", "application/pdf", "cmVwb3J0"),
+            ),
+        )
+        val blocks = sendPromptAndGetContentBlocks(prompt, fakeSession, session, manager)
+        val images = blocks.filterIsInstance<ContentBlock.Image>()
+        val resources = blocks.filterIsInstance<ContentBlock.Resource>()
+        val texts = blocks.filterIsInstance<ContentBlock.Text>()
+        assertEquals(1, images.size, "Should have 1 image block (png)")
+        assertEquals(1, resources.size, "Should have 1 resource block (pdf)")
+        assertEquals(1, texts.size, "Should have 1 text block with inlined csv")
+        assertTrue(texts[0].text.contains("[File: data.csv]"))
+        assertTrue(texts[0].text.contains("name,age"))
+        assertTrue(texts[0].text.contains("analyze all"))
+    }
+
+    @Test
+    fun promptWithTextExtensionAndOctetStreamMimeTypeInlinesAsText() = testApp { _, fakeSession, session, manager ->
+        // Browsers often report application/octet-stream for .md, .json, .yaml etc.
+        val mdContent = java.util.Base64.getEncoder().encodeToString("# Hello\nWorld".toByteArray())
+        val prompt = WsMessage.Prompt(
+            text = "summarize the contents",
+            files = listOf(FileAttachment("effect-intro.md", "application/octet-stream", mdContent)),
+        )
+        val blocks = sendPromptAndGetContentBlocks(prompt, fakeSession, session, manager)
+        val resources = blocks.filterIsInstance<ContentBlock.Resource>()
+        assertEquals(0, resources.size, "Text-like files should not produce Resource blocks even with octet-stream MIME")
+        val texts = blocks.filterIsInstance<ContentBlock.Text>()
+        assertEquals(1, texts.size)
+        assertTrue(texts[0].text.contains("[File: effect-intro.md]"))
+        assertTrue(texts[0].text.contains("# Hello\nWorld"))
+        assertTrue(texts[0].text.contains("summarize the contents"))
     }
 
     @Test

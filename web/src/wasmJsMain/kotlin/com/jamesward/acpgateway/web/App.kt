@@ -32,6 +32,96 @@ import kotlin.js.Promise
 /** Required by Kilua RPC to set the WebSocket URL prefix */
 fun setRpcUrlPrefix(prefix: String): Unit = js("globalThis.rpc_url_prefix = prefix")
 
+// ---- Console capture & browser state collection (JS bridges) ----
+
+/** Install console.log/warn/error interceptors, buffering last 50 entries. */
+@JsFun("""() => {
+    if (globalThis.__consoleCaptured) return;
+    globalThis.__consoleCaptured = true;
+    globalThis.__consoleBuffer = [];
+    const MAX = 50;
+    ['log','warn','error'].forEach(level => {
+        const orig = console[level].bind(console);
+        console[level] = function() {
+            const args = Array.from(arguments).map(a => {
+                try { return typeof a === 'string' ? a : JSON.stringify(a); } catch(e) { return String(a); }
+            }).join(' ');
+            globalThis.__consoleBuffer.push({ ts: new Date().toISOString(), level: level, msg: args });
+            if (globalThis.__consoleBuffer.length > MAX) globalThis.__consoleBuffer.shift();
+            orig.apply(console, arguments);
+        };
+    });
+}""")
+private external fun installConsoleCapture()
+
+/** Return captured console entries as JSON string. */
+@JsFun("""() => {
+    return JSON.stringify(globalThis.__consoleBuffer || []);
+}""")
+private external fun getConsoleLogs(): String
+
+/** Collect DOM state summary as JSON string. */
+@JsFun("""() => {
+    const msgs = document.getElementById('messages');
+    const msgCount = msgs ? msgs.children.length : -1;
+    const permDialog = document.querySelector('.permission-overlay');
+    const state = {
+        messageCount: msgCount,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        permissionDialogVisible: permDialog !== null,
+        title: document.title,
+        bodyClasses: document.body.className,
+        url: location.href
+    };
+    return JSON.stringify(state);
+}""")
+private external fun getDomState(): String
+
+/** Check if #messages is scrolled to (near) the bottom. */
+@JsFun("""() => {
+    const el = document.getElementById('messages');
+    if (!el) return true;
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+}""")
+private external fun isMessagesAtBottom(): Boolean
+
+/** Scroll #messages to the bottom. */
+@JsFun("""() => {
+    const el = document.getElementById('messages');
+    if (el) el.scrollTop = el.scrollHeight;
+}""")
+private external fun scrollMessagesToBottom()
+
+/** Trigger a client-side file download with the given filename and text content. */
+@JsFun("""(filename, content) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}""")
+private external fun downloadTextFile(filename: String, content: String)
+
+/** Install a scroll listener on #messages that tracks atBottom in a JS global. */
+@JsFun("""() => {
+    const el = document.getElementById('messages');
+    if (!el) return;
+    globalThis.__messagesAtBottom = true;
+    el.addEventListener('scroll', () => {
+        globalThis.__messagesAtBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+    });
+}""")
+private external fun installScrollListener()
+
+/** Read the current atBottom state from the JS global. */
+@JsFun("() => { return globalThis.__messagesAtBottom !== false; }")
+private external fun readScrollAtBottom(): Boolean
+
 /** Opens a file picker dialog and returns the selected FileList via a Promise. */
 @JsFun("""(multiple) => new Promise(function(resolve) {
     var input = document.createElement('input');
@@ -81,7 +171,7 @@ data class ToolCallState(
 )
 
 sealed class ChatMessage {
-    data class User(val text: String) : ChatMessage()
+    data class User(val text: String, val fileNames: List<String> = emptyList()) : ChatMessage()
     data class Assistant(val markdown: String, val usage: String? = null) : ChatMessage()
     data class Thought(val markdown: String, val usage: String? = null) : ChatMessage()
     data class ToolBlock(val tools: List<ToolCallState>) : ChatMessage()
@@ -102,11 +192,14 @@ class App : Application() {
     private var cwd by mutableStateOf<String?>(null)
     private var agentWorking by mutableStateOf(false)
     private var reconnectDelay = 1000
+    private var lastSeq: Long = 0
 
     // Conversation state
     private var messages by mutableStateOf(listOf<ChatMessage>())
-    private var currentThought by mutableStateOf<Pair<String, String>?>(null)
-    private var currentResponse by mutableStateOf<Pair<String, String>?>(null)
+    /** Triple(id, accumulatedMarkdown, usage) for current thought. */
+    private var currentThought by mutableStateOf<Triple<String, String, String>?>(null)
+    /** Triple(msgId, accumulatedMarkdown, usage) for current response. */
+    private var currentResponse by mutableStateOf<Triple<String, String, String>?>(null)
     private var currentToolCalls by mutableStateOf(listOf<ToolCallState>())
 
     // Permission state
@@ -131,6 +224,12 @@ class App : Application() {
     private var autocompleteFiltered by mutableStateOf(listOf<CommandInfo>())
     private var autocompleteSelectedIndex by mutableStateOf(-1)
 
+    // Scroll state
+    private var atBottom by mutableStateOf(true)
+
+    // Turn collapse state — messages before this index render collapsed
+    private var collapseBeforeIndex by mutableStateOf(0)
+
     // Input state
     private var promptText by mutableStateOf("")
 
@@ -150,6 +249,7 @@ class App : Application() {
     }
 
     override fun start() {
+        installConsoleCapture()
         val body = document.body
         debugMode = body.hasAttribute("data-debug")
         devMode = body.hasAttribute("data-dev")
@@ -172,6 +272,12 @@ class App : Application() {
                         wsSendChannel = sendChannel
                         reconnectDelay = 1000
                         connected = true
+
+                        // Send ResumeFrom if we have a prior seq position
+                        didResume = lastSeq > 0
+                        if (didResume) {
+                            sendChannel.send(WsMessage.ResumeFrom(lastSeq))
+                        }
 
                         try {
                             for (msg in receiveChannel) {
@@ -204,28 +310,72 @@ class App : Application() {
 
     // ---- Message handler ----
 
+    /** Extract seq from a server message, or 0 if not present. */
+    private fun extractSeq(msg: WsMessage): Long = when (msg) {
+        is WsMessage.Connected -> msg.seq
+        is WsMessage.AgentText -> msg.seq
+        is WsMessage.AgentThought -> msg.seq
+        is WsMessage.ToolCall -> msg.seq
+        is WsMessage.TurnComplete -> msg.seq
+        is WsMessage.UserMessage -> msg.seq
+        is WsMessage.Error -> msg.seq
+        else -> 0
+    }
+
+    /** Whether we sent a ResumeFrom on this connection. */
+    private var didResume = false
+
     private fun onMessage(msg: WsMessage) {
+        val seq = extractSeq(msg)
+        if (seq > 0) lastSeq = seq
+
         when (msg) {
             is WsMessage.Connected -> {
                 agentName = msg.agentName
                 agentVersion = msg.agentVersion
                 cwd = msg.cwd
-                messages = emptyList()
-                currentThought = null
-                currentResponse = null
-                currentToolCalls = emptyList()
+                // Reset state on fresh connect (not a delta resume)
+                if (!didResume) {
+                    messages = emptyList()
+                    collapseBeforeIndex = 0
+                    currentThought = null
+                    currentResponse = null
+                    currentToolCalls = emptyList()
+                }
                 stopStatusTimer()
                 agentWorking = msg.agentWorking
                 if (msg.agentWorking) startStatusTimer()
             }
             is WsMessage.UserMessage -> {
-                messages = messages + ChatMessage.User(msg.text)
+                messages = messages + ChatMessage.User(msg.text, msg.fileNames)
             }
             is WsMessage.AgentText -> {
-                currentResponse = Pair(msg.markdown, msg.usage ?: "")
+                // Accumulate delta chunks by msgId
+                val existing = currentResponse
+                if (existing != null && existing.first == msg.msgId) {
+                    // Same msgId — append delta
+                    currentResponse = Triple(msg.msgId, existing.second + msg.markdown, msg.usage ?: existing.third)
+                } else if (msg.msgId.startsWith("history-")) {
+                    // History replay sends full text, not delta
+                    currentResponse = Triple(msg.msgId, msg.markdown, msg.usage ?: "")
+                } else {
+                    // New msgId — start fresh
+                    currentResponse = Triple(msg.msgId, msg.markdown, msg.usage ?: "")
+                }
             }
             is WsMessage.AgentThought -> {
-                currentThought = Pair(msg.markdown, msg.usage ?: "")
+                // Accumulate delta chunks by thoughtId
+                val existing = currentThought
+                if (existing != null && existing.first == msg.thoughtId) {
+                    // Same thoughtId — append delta
+                    currentThought = Triple(msg.thoughtId, existing.second + msg.markdown, msg.usage ?: existing.third)
+                } else if (msg.thoughtId.startsWith("history-")) {
+                    // History replay sends full text, not delta
+                    currentThought = Triple(msg.thoughtId, msg.markdown, msg.usage ?: "")
+                } else {
+                    // New thoughtId — start fresh
+                    currentThought = Triple(msg.thoughtId, msg.markdown, msg.usage ?: "")
+                }
             }
             is WsMessage.ToolCall -> {
                 val existing = currentToolCalls.find { it.id == msg.toolCallId }
@@ -247,16 +397,19 @@ class App : Application() {
             is WsMessage.PermissionRequest -> {
                 permissionRequest = msg
             }
+            is WsMessage.PermissionResponse -> {
+                permissionRequest = null
+            }
             is WsMessage.TurnComplete -> {
                 val newMessages = mutableListOf<ChatMessage>()
                 newMessages.addAll(messages)
-                currentThought?.let { (html, usage) ->
+                currentThought?.let { (_, html, usage) ->
                     newMessages.add(ChatMessage.Thought(html, usage.ifEmpty { null }))
                 }
                 if (currentToolCalls.isNotEmpty()) {
                     newMessages.add(ChatMessage.ToolBlock(currentToolCalls.toList()))
                 }
-                currentResponse?.let { (html, usage) ->
+                currentResponse?.let { (_, html, usage) ->
                     newMessages.add(ChatMessage.Assistant(html, usage.ifEmpty { null }))
                 }
                 messages = newMessages
@@ -280,7 +433,8 @@ class App : Application() {
                 availableCommands = msg.commands
             }
             is WsMessage.BrowserStateRequest -> {
-                sendWs(WsMessage.BrowserStateResponse(msg.requestId, """{"status":"minimal client"}"""))
+                val state = collectBrowserState(msg.query)
+                sendWs(WsMessage.BrowserStateResponse(msg.requestId, state))
             }
             else -> {}
         }
@@ -290,12 +444,18 @@ class App : Application() {
 
     @Composable
     private fun IComponent.chatApp() {
+        appStyles()
+
         // Header
         header {
-            span { +(agentName.ifEmpty { "ACP Gateway" }) }
+            val agentIcon = currentAgentId?.let { id -> availableAgents.find { it.id == id }?.icon }
+            if (agentIcon != null) {
+                img(src = agentIcon, alt = agentName) { className("header-icon") }
+            }
+            span(className = "header-title") { +(agentName.ifEmpty { "ACP Gateway" }) }
             val cwdVal = cwd
             if (cwdVal != null) {
-                span { +" \u00b7 $cwdVal" }
+                span(className = "header-info") { +" \u00b7 $cwdVal" }
             }
             if (availableAgents.size > 1) {
                 button("\u21C4") {
@@ -325,32 +485,51 @@ class App : Application() {
         div {
             id("messages")
             for ((index, msg) in messages.withIndex()) {
+                val expanded = index >= collapseBeforeIndex
                 key(index) {
                     when (msg) {
-                        is ChatMessage.User -> userMessageView(msg.text)
-                        is ChatMessage.Assistant -> assistantMessageView(msg.markdown, msg.usage)
-                        is ChatMessage.Thought -> thoughtMessageView(msg.markdown, msg.usage)
+                        is ChatMessage.User -> userMessageView(msg.text, msg.fileNames)
+                        is ChatMessage.Assistant -> assistantMessageView(msg.markdown, msg.usage, expanded)
+                        is ChatMessage.Thought -> thoughtMessageView(msg.markdown, msg.usage, expanded = expanded)
                         is ChatMessage.ToolBlock -> toolBlockView(msg.tools)
                         is ChatMessage.Error -> errorMessageView(msg.message)
                     }
                 }
             }
             // Current turn in-progress
-            currentThought?.let { (html, usage) ->
-                thoughtMessageView(html, usage.ifEmpty { null })
+            currentThought?.let { (_, html, usage) ->
+                thoughtMessageView(html, usage.ifEmpty { null }, showTimer = true)
             }
             if (currentToolCalls.isNotEmpty()) {
                 toolBlockView(currentToolCalls)
             }
-            currentResponse?.let { (html, usage) ->
+            currentResponse?.let { (_, html, usage) ->
                 assistantMessageView(html, usage.ifEmpty { null })
             }
         }
 
-        // Status timer
-        if (agentWorking && elapsedSeconds > 0) {
-            div {
-                +formatElapsed(elapsedSeconds)
+        // Install scroll listener after DOM is committed, then poll scroll state
+        LaunchedEffect(Unit) {
+            delay(100) // ensure DOM is flushed
+            installScrollListener()
+            while (true) {
+                atBottom = readScrollAtBottom()
+                delay(200)
+            }
+        }
+        val contentKey = messages.size to (currentResponse?.second?.length ?: 0)
+        LaunchedEffect(contentKey, currentToolCalls.size, currentThought) {
+            if (readScrollAtBottom()) scrollMessagesToBottom()
+        }
+
+        // Scroll-to-bottom button
+        if (!atBottom) {
+            button("\u2193") {
+                className("scroll-btn")
+                onClick {
+                    scrollMessagesToBottom()
+                    atBottom = true
+                }
             }
         }
 
@@ -365,24 +544,33 @@ class App : Application() {
     }
 
     @Composable
-    private fun IComponent.userMessageView(text: String) {
-        div {
-            div { +text }
+    private fun IComponent.userMessageView(text: String, fileNames: List<String> = emptyList()) {
+        div(className = "msg msg-user") {
+            div(className = "msg-content") {
+                if (text.isNotEmpty()) +text
+                if (fileNames.isNotEmpty()) {
+                    div(className = "msg-files") {
+                        for (name in fileNames) {
+                            span(className = "msg-file-tag") { +name }
+                        }
+                    }
+                }
+            }
         }
     }
 
     @Composable
-    private fun IComponent.assistantMessageView(markdown: String, usage: String?) {
-        div {
+    private fun IComponent.assistantMessageView(markdown: String, usage: String?, expanded: Boolean = true) {
+        div(className = "msg msg-assistant") {
             details {
-                attribute("open", "")
+                if (expanded) attribute("open", "")
                 summary {
                     span { +"Response" }
                     if (usage != null) {
                         span { +" \u00b7 $usage" }
                     }
                 }
-                div {
+                div(className = "msg-body") {
                     rawHtml(dev.kilua.marked.parseMarkdown(markdown))
                 }
             }
@@ -390,17 +578,17 @@ class App : Application() {
     }
 
     @Composable
-    private fun IComponent.thoughtMessageView(markdown: String, usage: String?) {
-        div {
+    private fun IComponent.thoughtMessageView(markdown: String, usage: String?, showTimer: Boolean = false, expanded: Boolean = true) {
+        div(className = "msg msg-thought") {
             details {
-                attribute("open", "")
+                if (expanded) attribute("open", "")
                 summary {
                     span { +"Thinking" }
-                    if (usage != null) {
-                        span { +" \u00b7 $usage" }
+                    if (showTimer && elapsedSeconds > 0) {
+                        span { +" ${formatElapsed(elapsedSeconds)}" }
                     }
                 }
-                div {
+                div(className = "msg-body") {
                     rawHtml(dev.kilua.marked.parseMarkdown(markdown))
                 }
             }
@@ -415,23 +603,25 @@ class App : Application() {
         val total = tools.size
         val activeName = tools.lastOrNull { it.status == ToolStatus.InProgress }?.title
 
-        div {
+        div(className = "msg msg-tools") {
             details {
                 summary {
-                    val label = if (total == 1) "1 tool call" else "$total tool calls"
-                    +label
-                    val parts = mutableListOf<String>()
-                    if (done > 0) parts.add("$done done")
-                    if (failed > 0) parts.add("$failed failed")
-                    if (running > 0) parts.add("$running running")
-                    if (parts.isNotEmpty()) {
-                        +" (${parts.joinToString(", ")})"
+                    span(className = "tool-summary-label") {
+                        val label = if (total == 1) "1 tool call" else "$total tool calls"
+                        +label
+                        val parts = mutableListOf<String>()
+                        if (done > 0) parts.add("$done done")
+                        if (failed > 0) parts.add("$failed failed")
+                        if (running > 0) parts.add("$running running")
+                        if (parts.isNotEmpty()) {
+                            +" (${parts.joinToString(", ")})"
+                        }
                     }
                     if (activeName != null) {
-                        +" \u00b7 $activeName"
+                        span(className = "tool-summary-active") { +" \u00b7 $activeName" }
                     }
                 }
-                div {
+                div(className = "tools-list") {
                     for (tc in tools) {
                         toolRow(tc)
                     }
@@ -442,39 +632,85 @@ class App : Application() {
 
     @Composable
     private fun IComponent.toolRow(tc: ToolCallState) {
-        div {
-            val icon = when (tc.status) {
-                ToolStatus.Completed -> "\u2713"
-                ToolStatus.Failed -> "\u2717"
-                else -> "\u25CB"
+        val hasContent = tc.contentHtml != null || !tc.content.isNullOrEmpty()
+        if (hasContent) {
+            details(className = "tool-item") {
+                summary {
+                    toolRowSummary(tc)
+                }
+                val contentHtml = tc.contentHtml
+                val contentText = tc.content
+                if (contentHtml != null) {
+                    div(className = "tool-content") { rawHtml(contentHtml) }
+                } else if (!contentText.isNullOrEmpty()) {
+                    div(className = "tool-content") { pre { +contentText } }
+                }
             }
-            span { +icon }
-            span { +" ${tc.title}" }
-            if (tc.location != null) {
-                span { +" \u00b7 ${tc.location.substringAfterLast('/')}" }
-            }
-            val contentHtml = tc.contentHtml
-            val contentText = tc.content
-            if (contentHtml != null) {
-                div { rawHtml(contentHtml) }
-            } else if (!contentText.isNullOrEmpty()) {
-                pre(contentText)
+        } else {
+            div(className = "tool-item") {
+                toolRowSummary(tc)
             }
         }
     }
 
     @Composable
+    private fun IComponent.toolRowSummary(tc: ToolCallState) {
+        val iconClass = when (tc.status) {
+            ToolStatus.Completed -> "tool-icon-ok"
+            ToolStatus.Failed -> "tool-icon-fail"
+            else -> "tool-icon-pending"
+        }
+        val icon = when (tc.status) {
+            ToolStatus.Completed -> "\u2713"
+            ToolStatus.Failed -> "\u2717"
+            else -> "\u25CB"
+        }
+        span(className = iconClass) { +icon }
+        span(className = "tool-name") { +" ${tc.title}" }
+        if (tc.location != null) {
+            span(className = "tool-location") { +" \u00b7 ${tc.location.substringAfterLast('/')}" }
+        }
+    }
+
+    @Composable
     private fun IComponent.agentSelectorView() {
-        div {
-            h3 { +"Select an Agent" }
-            div {
-                for (agent in availableAgents) {
-                    val isCurrent = agent.id == currentAgentId
-                    button(agent.name) {
-                        if (isCurrent) attribute("disabled", "")
-                        onClick {
-                            sendWs(WsMessage.ChangeAgent(agent.id))
-                            showAgentSelector = false
+        div(className = "agent-selector-overlay") {
+            onClick { showAgentSelector = false }
+            div(className = "agent-selector-dialog") {
+                onClick { it.stopPropagation() }
+                h3 { +"Select an Agent" }
+                div(className = "agent-selector-list") {
+                    for (agent in availableAgents) {
+                        val isCurrent = agent.id == currentAgentId
+                        div(className = if (isCurrent) "agent-selector-item current" else "agent-selector-item") {
+                            if (!isCurrent) {
+                                onClick {
+                                    sendWs(WsMessage.ChangeAgent(agent.id))
+                                    messages = listOf()
+                                    currentThought = null
+                                    currentResponse = null
+                                    currentToolCalls = listOf()
+                                    permissionRequest = null
+                                    agentWorking = false
+                                    showAgentSelector = false
+                                }
+                            }
+                            if (agent.icon != null) {
+                                img(src = agent.icon, alt = agent.name) { className("agent-selector-icon") }
+                            } else {
+                                div(className = "agent-selector-icon-placeholder") {
+                                    +(agent.name.firstOrNull()?.uppercase() ?: "?")
+                                }
+                            }
+                            div(className = "agent-selector-info") {
+                                div(className = "agent-selector-name") {
+                                    +agent.name
+                                    if (isCurrent) span(className = "agent-selector-badge") { +"current" }
+                                }
+                                if (agent.description.isNotEmpty()) {
+                                    div(className = "agent-selector-desc") { +agent.description }
+                                }
+                            }
                         }
                     }
                 }
@@ -484,20 +720,22 @@ class App : Application() {
 
     @Composable
     private fun IComponent.errorMessageView(message: String) {
-        div { +message }
+        div(className = "msg msg-error") { +message }
     }
 
     @Composable
     private fun IComponent.permissionDialog(perm: WsMessage.PermissionRequest) {
-        div {
-            h3 { +"Permission Required" }
-            p { +perm.title }
-            div {
-                for (opt in perm.options) {
-                    button(opt.name) {
-                        onClick {
-                            sendWs(WsMessage.PermissionResponse(perm.toolCallId, opt.optionId))
-                            permissionRequest = null
+        div(className = "permission-overlay") {
+            div(className = "permission-dialog") {
+                h3 { +"Permission Required" }
+                p { +perm.title }
+                div(className = "perm-actions") {
+                    for (opt in perm.options) {
+                        button(opt.name) {
+                            onClick {
+                                sendWs(WsMessage.PermissionResponse(perm.toolCallId, opt.optionId))
+                                permissionRequest = null
+                            }
                         }
                     }
                 }
@@ -507,104 +745,44 @@ class App : Application() {
 
     @Composable
     private fun IComponent.inputBar() {
-        // File preview
-        if (pendingFiles.isNotEmpty()) {
-            div {
-                for ((index, file) in pendingFiles.withIndex()) {
-                    span {
-                        +file.name
-                        button("\u00d7") {
-                            title("Remove")
+        div(className = "input-bar") {
+            // File preview
+            if (pendingFiles.isNotEmpty()) {
+                div(className = "file-preview") {
+                    for ((index, file) in pendingFiles.withIndex()) {
+                        span(className = "file-chip") {
+                            +file.name
+                            button("\u00d7") {
+                                title("Remove")
+                                onClick {
+                                    pendingFiles = pendingFiles.filterIndexed { i, _ -> i != index }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Autocomplete popup
+            if (autocompleteFiltered.isNotEmpty()) {
+                div(className = "autocomplete-popup") {
+                    for ((i, cmd) in autocompleteFiltered.withIndex()) {
+                        div(className = if (i == autocompleteSelectedIndex) "autocomplete-item selected" else "autocomplete-item") {
+                            attribute("title", cmd.description)
                             onClick {
-                                pendingFiles = pendingFiles.filterIndexed { i, _ -> i != index }
+                                completeCommand(cmd.name)
                             }
+                            span { +"/${cmd.name}" }
                         }
                     }
                 }
             }
-        }
 
-        // Autocomplete popup (positioned above the input bar)
-        if (autocompleteFiltered.isNotEmpty()) {
-            div {
-                for ((i, cmd) in autocompleteFiltered.withIndex()) {
-                    div {
-                        attribute("style", if (i == autocompleteSelectedIndex) "background: #e0e0e0; cursor: pointer; padding: 4px 8px;" else "cursor: pointer; padding: 4px 8px;")
-                        attribute("title", cmd.description)
-                        onClick {
-                            completeCommand(cmd.name)
-                        }
-                        span { +"/${cmd.name}" }
-                    }
-                }
-            }
-        }
-
-        div {
-            tag("form") {
-                onEvent<web.events.Event>("submit") { e ->
-                    e.preventDefault()
-                    dismissAutocomplete()
-                    if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
-                }
-
-                textArea(
-                    value = promptText,
-                    rows = 3,
-                    placeholder = "Send a message...",
-                    disabled = if (agentWorking) true else null,
-                ) {
-                    onInput {
-                        promptText = this.value ?: ""
-                        updateAutocomplete(promptText)
-                    }
-                    onKeydown { e ->
-                        if (autocompleteFiltered.isNotEmpty()) {
-                            when (e.key) {
-                                "Tab" -> {
-                                    e.preventDefault()
-                                    val idx = if (autocompleteSelectedIndex >= 0) autocompleteSelectedIndex else 0
-                                    if (idx < autocompleteFiltered.size) {
-                                        completeCommand(autocompleteFiltered[idx].name)
-                                    }
-                                    return@onKeydown
-                                }
-                                "Escape" -> {
-                                    e.preventDefault()
-                                    dismissAutocomplete()
-                                    return@onKeydown
-                                }
-                                "ArrowDown" -> {
-                                    e.preventDefault()
-                                    autocompleteSelectedIndex = ((autocompleteSelectedIndex + 1) % autocompleteFiltered.size)
-                                    return@onKeydown
-                                }
-                                "ArrowUp" -> {
-                                    e.preventDefault()
-                                    autocompleteSelectedIndex = if (autocompleteSelectedIndex <= 0) autocompleteFiltered.size - 1 else autocompleteSelectedIndex - 1
-                                    return@onKeydown
-                                }
-                            }
-                        }
-                        if (e.key == "Enter" && !e.shiftKey) {
-                            e.preventDefault()
-                            dismissAutocomplete()
-                            if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
-                        }
-                    }
-                    setDropTarget { e ->
-                        val files = e.dataTransfer?.files ?: return@setDropTarget
-                        if (files.length > 0) {
-                            readAndAddFiles(files)
-                        }
-                    }
-                    onEvent<web.clipboard.ClipboardEvent>("paste") { e ->
-                        handlePasteFiles(e)
-                    }
-                }
-
-                button("Attach") {
+            div(className = "input-row") {
+                button("+") {
+                    className("btn-attach")
                     type(ButtonType.Button)
+                    title("Attach files")
                     onClick {
                         scope.launch {
                             val fileList: web.file.FileList = pickFiles(true).await()
@@ -615,22 +793,109 @@ class App : Application() {
                     }
                 }
 
-                if (debugMode) {
-                    label {
-                        tag("input") {
-                            attribute("type", "checkbox")
-                            if (screenshotEnabled) attribute("checked", "")
-                            onEvent<web.events.Event>("change") {
-                                screenshotEnabled = !screenshotEnabled
+                tag("form") {
+                    onEvent<web.events.Event>("submit") { e ->
+                        e.preventDefault()
+                        dismissAutocomplete()
+                        if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+                    }
+
+                    textArea(
+                        value = promptText,
+                        rows = 3,
+                        placeholder = "Send a message...",
+                        disabled = if (agentWorking) true else null,
+                    ) {
+                        onInput {
+                            promptText = this.value ?: ""
+                            updateAutocomplete(promptText)
+                        }
+                        onKeydown { e ->
+                            if (autocompleteFiltered.isNotEmpty()) {
+                                when (e.key) {
+                                    "Tab" -> {
+                                        e.preventDefault()
+                                        val idx = if (autocompleteSelectedIndex >= 0) autocompleteSelectedIndex else 0
+                                        if (idx < autocompleteFiltered.size) {
+                                            completeCommand(autocompleteFiltered[idx].name)
+                                        }
+                                        return@onKeydown
+                                    }
+                                    "Escape" -> {
+                                        e.preventDefault()
+                                        dismissAutocomplete()
+                                        return@onKeydown
+                                    }
+                                    "ArrowDown" -> {
+                                        e.preventDefault()
+                                        autocompleteSelectedIndex = ((autocompleteSelectedIndex + 1) % autocompleteFiltered.size)
+                                        return@onKeydown
+                                    }
+                                    "ArrowUp" -> {
+                                        e.preventDefault()
+                                        autocompleteSelectedIndex = if (autocompleteSelectedIndex <= 0) autocompleteFiltered.size - 1 else autocompleteSelectedIndex - 1
+                                        return@onKeydown
+                                    }
+                                }
+                            }
+                            if (e.key == "Enter" && !e.shiftKey) {
+                                e.preventDefault()
+                                dismissAutocomplete()
+                                if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
                             }
                         }
-                        +"Screenshot"
+                        setDropTarget { e ->
+                            val files = e.dataTransfer?.files ?: return@setDropTarget
+                            if (files.length > 0) {
+                                readAndAddFiles(files)
+                            }
+                        }
+                        onEvent<web.clipboard.ClipboardEvent>("paste") { e ->
+                            handlePasteFiles(e)
+                        }
                     }
-                }
 
-                val btnLabel = if (agentWorking) "Cancel" else "Send"
-                button(btnLabel) {
-                    type(ButtonType.Submit)
+                    div(className = "input-actions") {
+                        div(className = "btn-row") {
+                            if (agentWorking) {
+                                button("Cancel") {
+                                    className("btn-cancel")
+                                    type(ButtonType.Submit)
+                                }
+                                if (debugMode) {
+                                    button("Diagnose") {
+                                        className("btn-diagnose")
+                                        type(ButtonType.Button)
+                                        onClick {
+                                            sendWs(WsMessage.Diagnose)
+                                        }
+                                    }
+                                }
+                            } else {
+                                button("Send") {
+                                    className("btn-send")
+                                    type(ButtonType.Submit)
+                                }
+                            }
+                        }
+                        if (debugMode) {
+                            label(className = "screenshot-label") {
+                                tag("input") {
+                                    attribute("type", "checkbox")
+                                    if (screenshotEnabled) attribute("checked", "")
+                                    onEvent<web.events.Event>("change") {
+                                        screenshotEnabled = !screenshotEnabled
+                                    }
+                                }
+                                +"Screenshot"
+                            }
+                            button("Download Log") {
+                                className("btn-download-log")
+                                type(ButtonType.Button)
+                                onClick { downloadChatLog() }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -687,13 +952,98 @@ class App : Application() {
         dismissAutocomplete()
     }
 
+    // ---- Browser state collection ----
+
+    private fun collectBrowserState(query: String): String {
+        return when (query) {
+            "console" -> getConsoleLogs()
+            "dom" -> getDomState()
+            else -> {
+                // "all" or unrecognized — return both
+                """{"console":${getConsoleLogs()},"dom":${getDomState()}}"""
+            }
+        }
+    }
+
     // ---- Actions ----
+
+    private fun downloadChatLog() {
+        val sb = StringBuilder()
+        sb.appendLine("# Chat Log — ${agentName.ifEmpty { "ACP Gateway" }}")
+        sb.appendLine()
+
+        fun appendMessages(msgs: List<ChatMessage>) {
+            for (msg in msgs) {
+                when (msg) {
+                    is ChatMessage.User -> {
+                        sb.appendLine("## User")
+                        sb.appendLine(msg.text)
+                        if (msg.fileNames.isNotEmpty()) {
+                            sb.appendLine("Files: ${msg.fileNames.joinToString(", ")}")
+                        }
+                        sb.appendLine()
+                    }
+                    is ChatMessage.Assistant -> {
+                        sb.appendLine("## Assistant")
+                        if (msg.usage != null) sb.appendLine("_${msg.usage}_")
+                        sb.appendLine(msg.markdown)
+                        sb.appendLine()
+                    }
+                    is ChatMessage.Thought -> {
+                        sb.appendLine("## Thinking")
+                        if (msg.usage != null) sb.appendLine("_${msg.usage}_")
+                        sb.appendLine(msg.markdown)
+                        sb.appendLine()
+                    }
+                    is ChatMessage.ToolBlock -> {
+                        sb.appendLine("## Tool Calls")
+                        for (tc in msg.tools) {
+                            val icon = when (tc.status) {
+                                ToolStatus.Completed -> "[ok]"
+                                ToolStatus.Failed -> "[fail]"
+                                else -> "[pending]"
+                            }
+                            sb.appendLine("- $icon ${tc.title}${tc.location?.let { " · $it" } ?: ""}")
+                            if (!tc.content.isNullOrEmpty()) {
+                                sb.appendLine("  ```")
+                                for (line in tc.content.lines()) sb.appendLine("  $line")
+                                sb.appendLine("  ```")
+                            }
+                        }
+                        sb.appendLine()
+                    }
+                    is ChatMessage.Error -> {
+                        sb.appendLine("## Error")
+                        sb.appendLine(msg.message)
+                        sb.appendLine()
+                    }
+                }
+            }
+        }
+
+        appendMessages(messages)
+
+        // Include in-progress turn if any
+        val inProgress = mutableListOf<ChatMessage>()
+        currentThought?.let { (_, md, usage) -> inProgress.add(ChatMessage.Thought(md, usage.ifEmpty { null })) }
+        if (currentToolCalls.isNotEmpty()) inProgress.add(ChatMessage.ToolBlock(currentToolCalls))
+        currentResponse?.let { (_, md, usage) -> inProgress.add(ChatMessage.Assistant(md, usage.ifEmpty { null })) }
+        if (inProgress.isNotEmpty()) {
+            sb.appendLine("---")
+            sb.appendLine("_In progress:_")
+            sb.appendLine()
+            appendMessages(inProgress)
+        }
+
+        downloadTextFile("chat-log.md", sb.toString())
+    }
 
     private fun sendPrompt() {
         val text = promptText.trim()
         if (text.isEmpty() && pendingFiles.isEmpty()) return
 
         val files = pendingFiles.toList()
+        collapseBeforeIndex = messages.size
         promptText = ""
         pendingFiles = emptyList()
         agentWorking = true

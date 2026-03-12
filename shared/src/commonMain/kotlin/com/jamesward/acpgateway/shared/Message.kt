@@ -14,22 +14,24 @@ sealed class WsMessage {
         val files: List<FileAttachment> = emptyList(),
     ) : WsMessage()
 
-    /** Server → client: streamed agent response with SSR markdown HTML. */
+    /** Server → client: streamed agent response chunk (delta). Client accumulates by msgId. */
     @Serializable
     @SerialName("agent_text")
     data class AgentText(
         val msgId: String,
         val markdown: String,
         val usage: String? = null,
+        val seq: Long = 0,
     ) : WsMessage()
 
-    /** Server → client: streamed agent thought with SSR markdown HTML. */
+    /** Server → client: streamed agent thought chunk (delta). Client accumulates by thoughtId. */
     @Serializable
     @SerialName("agent_thought")
     data class AgentThought(
         val thoughtId: String,
         val markdown: String,
         val usage: String? = null,
+        val seq: Long = 0,
     ) : WsMessage()
 
     /** Server → client: tool call start or update. */
@@ -43,6 +45,7 @@ sealed class WsMessage {
         val contentHtml: String? = null,
         val kind: ToolKind? = null,
         val location: String? = null,
+        val seq: Long = 0,
     ) : WsMessage()
 
     @Serializable
@@ -62,11 +65,11 @@ sealed class WsMessage {
 
     @Serializable
     @SerialName("turn_complete")
-    data class TurnComplete(val stopReason: String) : WsMessage()
+    data class TurnComplete(val stopReason: String, val seq: Long = 0) : WsMessage()
 
     @Serializable
     @SerialName("error")
-    data class Error(val message: String) : WsMessage()
+    data class Error(val message: String, val seq: Long = 0) : WsMessage()
 
     @Serializable
     @SerialName("connected")
@@ -75,6 +78,7 @@ sealed class WsMessage {
         val agentVersion: String,
         val cwd: String? = null,
         val agentWorking: Boolean = false,
+        val seq: Long = 0,
     ) : WsMessage()
 
     @Serializable
@@ -88,7 +92,7 @@ sealed class WsMessage {
     /** Server → client: replay a completed user message from history. */
     @Serializable
     @SerialName("user_message")
-    data class UserMessage(val text: String) : WsMessage()
+    data class UserMessage(val text: String, val fileNames: List<String> = emptyList(), val seq: Long = 0) : WsMessage()
 
     @Serializable
     @SerialName("browser_state_request")
@@ -112,6 +116,11 @@ sealed class WsMessage {
         val agents: List<AgentInfo>,
         val currentAgentId: String? = null,
     ) : WsMessage()
+
+    /** Client → server: resume from a given sequence number on reconnect. */
+    @Serializable
+    @SerialName("resume_from")
+    data class ResumeFrom(val lastSeq: Long) : WsMessage()
 }
 
 @Serializable
@@ -173,6 +182,8 @@ data class CommandInfo(
 data class AgentInfo(
     val id: String,
     val name: String,
+    val icon: String? = null,
+    val description: String = "",
 )
 
 @Serializable
@@ -180,6 +191,10 @@ data class ChatEntry(
     val role: String,
     val content: String,
     val timestamp: Long,
+    val thought: String? = null,
+    val toolCalls: List<ToolCallDisplay>? = null,
+    val usage: String? = null,
+    val fileNames: List<String>? = null,
 )
 
 @Serializable

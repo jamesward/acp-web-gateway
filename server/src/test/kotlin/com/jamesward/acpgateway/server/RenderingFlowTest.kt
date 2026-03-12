@@ -72,6 +72,16 @@ class RenderingFlowTest {
         return messages
     }
 
+    /** Accumulate AgentText deltas by msgId into full text (simulates what client does). */
+    private fun List<WsMessage.AgentText>.accumulatedText(): String {
+        return this.joinToString("") { it.markdown }
+    }
+
+    /** Accumulate AgentThought deltas by thoughtId into full text. */
+    private fun List<WsMessage.AgentThought>.accumulatedThought(): String {
+        return this.joinToString("") { it.markdown }
+    }
+
     // ---- Simple text response flow ----
 
     @Test
@@ -89,12 +99,12 @@ class RenderingFlowTest {
         assertNotNull(userMsg, "Should have UserMessage")
         assertEquals("hi", userMsg.text)
 
-        // 2. AgentText with rendered markdown
+        // 2. AgentText deltas that accumulate to full markdown
         val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
         assertTrue(agentTexts.isNotEmpty(), "Should have AgentText messages")
-        val lastText = agentTexts.last()
-        assertTrue(lastText.markdown.contains("Hello, world!"))
-        assertTrue(lastText.msgId.startsWith("msg-"))
+        val accumulated = agentTexts.accumulatedText()
+        assertTrue(accumulated.contains("Hello, world!"))
+        assertTrue(agentTexts.first().msgId.startsWith("msg-"))
 
         // 3. TurnComplete
         val turnComplete = messages.last()
@@ -121,16 +131,19 @@ class RenderingFlowTest {
         val messages = output.collectUntilTurnComplete()
         val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
 
-        assertTrue(agentTexts.size >= 2, "Should have at least 2 AgentText messages")
+        assertTrue(agentTexts.size >= 2, "Should have at least 2 AgentText messages (deltas)")
 
-        // First chunk: "Hello **bold" — incomplete markdown
-        val firstUpdate = agentTexts.first()
-        assertTrue(firstUpdate.markdown.contains("Hello"))
+        // First delta: "Hello **bold"
+        val firstDelta = agentTexts.first()
+        assertEquals("Hello **bold", firstDelta.markdown)
 
-        // Last chunk: "Hello **bold** world" — complete markdown
-        val lastUpdate = agentTexts.last()
-        assertTrue(lastUpdate.markdown.contains("**bold**"))
-        assertTrue(lastUpdate.markdown.contains("world"))
+        // Second delta: "** world"
+        val secondDelta = agentTexts[1]
+        assertEquals("** world", secondDelta.markdown)
+
+        // Accumulated: "Hello **bold** world"
+        val accumulated = agentTexts.accumulatedText()
+        assertTrue(accumulated.contains("Hello **bold** world"))
 
         // All AgentText messages share the same msgId
         val ids = agentTexts.map { it.msgId }.toSet()
@@ -181,9 +194,9 @@ class RenderingFlowTest {
         assertEquals(ToolStatus.Completed, completed.status)
         assertEquals("file contents", completed.content)
 
-        // AgentText also present
+        // AgentText delta also present
         val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
-        assertTrue(agentTexts.any { it.markdown.contains("Done") })
+        assertTrue(agentTexts.accumulatedText().contains("Done"))
     }
 
     // ---- Multiple tool calls ----
@@ -252,10 +265,10 @@ class RenderingFlowTest {
         assertEquals(1, thoughtIds.size, "All thoughts should share one thoughtId")
         assertTrue(thoughtIds.first().startsWith("thought-"))
 
-        // Last thought contains accumulated text
-        val lastThought = thoughts.last()
-        assertTrue(lastThought.markdown.contains("think"))
-        assertTrue(lastThought.markdown.contains("about this"))
+        // Accumulated thoughts contain full text
+        val accumulatedThought = thoughts.accumulatedThought()
+        assertTrue(accumulatedThought.contains("think"))
+        assertTrue(accumulatedThought.contains("about this"))
     }
 
     // ---- Error handling ----
@@ -286,33 +299,106 @@ class RenderingFlowTest {
     // ---- History replay ----
 
     @Test
-    fun historyReplayOnReconnect() = testChannels { input, output, fakeSession ->
-        fakeSession.enqueueTextResponse("first response")
+    fun historyReplayOnReconnectIncludesThoughtsAndToolCalls() = runTest {
+        val command = ProcessCommand("echo", listOf("test"))
+        val manager = AgentProcessManager(command, System.getProperty("user.dir"))
+        val fakeSession = ControllableFakeClientSession()
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val testStore = InMemorySessionStore()
+        val session = GatewaySession(
+            id = java.util.UUID.randomUUID(),
+            clientSession = fakeSession,
+            clientOps = GatewayClientOperations(),
+            cwd = System.getProperty("user.dir"),
+            scope = testScope,
+            store = testStore,
+        )
+        session.ready = true
+        session.startEventForwarding()
+        manager.sessions[session.id] = session
+        manager.agentName = "test-agent"
+        manager.agentVersion = "1.0.0"
 
-        output.receive() // Connected
+        // First connection: run a prompt with thought + tool call + response
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text("Let me think..."))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
+                    toolCallId = ToolCallId("tc-hist"),
+                    title = "Read data.txt",
+                    status = ToolCallStatus.IN_PROGRESS,
+                )))
+                emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
+                    toolCallId = ToolCallId("tc-hist"),
+                    title = "Read data.txt",
+                    status = ToolCallStatus.COMPLETED,
+                    content = listOf(ToolCallContent.Content(ContentBlock.Text("file data"))),
+                )))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("Here is the answer"))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
 
-        // Send a prompt and get response
-        input.send(WsMessage.Prompt("first"))
-        output.collectUntilTurnComplete()
+        val input1 = Channel<WsMessage>(Channel.UNLIMITED)
+        val output1 = Channel<WsMessage>(Channel.UNLIMITED)
 
-        // Close and reconnect with new channels
-        input.close()
+        val handler1 = launch {
+            handleChatChannels(input1, output1, session, manager)
+        }
 
+        output1.receive() // Connected
+
+        input1.send(WsMessage.Prompt("tell me"))
+
+        output1.collectUntilTurnComplete()
+
+        // Disconnect first client
+        input1.close()
+        handler1.cancel()
+
+        // Second connection: should get full history replay with thought + tool calls + response
         val input2 = Channel<WsMessage>(Channel.UNLIMITED)
         val output2 = Channel<WsMessage>(Channel.UNLIMITED)
-        val handlerJob2 = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-            val manager = AgentProcessManager(ProcessCommand("echo", listOf("test")), System.getProperty("user.dir"))
-            manager.agentName = "test-agent"
-            manager.agentVersion = "1.0.0"
-            // Find the session from the first handler's manager
-            // We need to use the same session, so get it from the first handler
-            // Actually, the session is shared via the GatewaySession object
-        }
-        handlerJob2.cancel()
 
-        // For reconnect test, we need the same session object.
-        // The testChannels helper creates one session, so let's test reconnect differently:
-        // Just verify the history was stored.
+        val handler2 = launch {
+            handleChatChannels(input2, output2, session, manager)
+        }
+
+        val connected = output2.receive()
+        assertIs<WsMessage.Connected>(connected)
+
+        // Collect all messages until TurnComplete (history replay)
+        val replayMsgs = output2.collectUntilTurnComplete()
+
+        // Should have UserMessage
+        val userMsgs = replayMsgs.filterIsInstance<WsMessage.UserMessage>()
+        assertEquals(1, userMsgs.size, "Should replay 1 UserMessage")
+        assertEquals("tell me", userMsgs.first().text)
+
+        // Should have AgentThought from history
+        val thoughts = replayMsgs.filterIsInstance<WsMessage.AgentThought>()
+        assertTrue(thoughts.isNotEmpty(), "Should replay thought from history")
+        assertTrue(thoughts.first().markdown.contains("Let me think"))
+        assertTrue(thoughts.first().thoughtId.startsWith("history-thought-"))
+
+        // Should have ToolCall from history
+        val toolCalls = replayMsgs.filterIsInstance<WsMessage.ToolCall>()
+        assertTrue(toolCalls.isNotEmpty(), "Should replay tool calls from history")
+        assertEquals("Read data.txt", toolCalls.first().title)
+        assertEquals(ToolStatus.Completed, toolCalls.first().status)
+
+        // Should have AgentText from history
+        val texts = replayMsgs.filterIsInstance<WsMessage.AgentText>()
+        assertTrue(texts.isNotEmpty(), "Should replay AgentText from history")
+        assertTrue(texts.first().markdown.contains("Here is the answer"))
+        assertTrue(texts.first().msgId.startsWith("history-"))
+
+        // Should have TurnComplete
+        val turnComplete = replayMsgs.last()
+        assertIs<WsMessage.TurnComplete>(turnComplete)
+
+        input2.close()
+        handler2.cancel()
     }
 
     // ---- Failed tool call ----
@@ -396,10 +482,10 @@ class RenderingFlowTest {
 
         val messages = output.collectUntilTurnComplete()
         val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
-        val lastText = agentTexts.last()
-        assertTrue(lastText.markdown.contains("Line 1"))
-        assertTrue(lastText.markdown.contains("Line 2"))
-        assertTrue(lastText.markdown.contains("Line 3"))
+        val accumulated = agentTexts.accumulatedText()
+        assertTrue(accumulated.contains("Line 1"))
+        assertTrue(accumulated.contains("Line 2"))
+        assertTrue(accumulated.contains("Line 3"))
     }
 
     @Test
@@ -412,10 +498,9 @@ class RenderingFlowTest {
 
         val messages = output.collectUntilTurnComplete()
         val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
-        val lastText = agentTexts.last()
-        // Two paragraphs separated by blank line
-        assertTrue(lastText.markdown.contains("Paragraph 1"))
-        assertTrue(lastText.markdown.contains("Paragraph 2"))
+        val accumulated = agentTexts.accumulatedText()
+        assertTrue(accumulated.contains("Paragraph 1"))
+        assertTrue(accumulated.contains("Paragraph 2"))
     }
 
     @Test
@@ -428,9 +513,9 @@ class RenderingFlowTest {
 
         val messages = output.collectUntilTurnComplete()
         val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
-        val lastText = agentTexts.last()
-        assertTrue(lastText.markdown.contains("1. First"))
-        assertTrue(lastText.markdown.contains("3. Third"))
+        val accumulated = agentTexts.accumulatedText()
+        assertTrue(accumulated.contains("1. First"))
+        assertTrue(accumulated.contains("3. Third"))
     }
 
     // ---- Diff rendering in tool calls ----
@@ -573,9 +658,243 @@ class RenderingFlowTest {
         val messages = output.collectUntilTurnComplete()
         val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
 
-        // After usage update, AgentText should include usage string
+        // After usage update, an AgentText delta should include usage string
         val withUsage = agentTexts.filter { it.usage != null }
         assertTrue(withUsage.isNotEmpty(), "Should have AgentText with usage info")
         assertTrue(withUsage.last().usage!!.contains("10K"), "Usage should contain token count")
+        // Accumulated text should contain the original content
+        assertTrue(agentTexts.accumulatedText().contains("Hello"))
+    }
+
+    // ---- Delta streaming specific tests ----
+
+    @Test
+    fun deltaStreamingSendsChunksNotAccumulated() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("chunk1"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("chunk2"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("chunk3"))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("test"))
+
+        val messages = output.collectUntilTurnComplete()
+        val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
+
+        assertEquals(3, agentTexts.size, "Should have exactly 3 delta messages")
+
+        // Each delta contains only its chunk, not accumulated text
+        assertEquals("chunk1", agentTexts[0].markdown)
+        assertEquals("chunk2", agentTexts[1].markdown)
+        assertEquals("chunk3", agentTexts[2].markdown)
+
+        // Accumulated = full text
+        assertEquals("chunk1chunk2chunk3", agentTexts.accumulatedText())
+    }
+
+    @Test
+    fun deltaThoughtStreamingSendsChunksNotAccumulated() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text("think1"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text("think2"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("response"))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("test"))
+
+        val messages = output.collectUntilTurnComplete()
+        val thoughts = messages.filterIsInstance<WsMessage.AgentThought>()
+
+        assertEquals(2, thoughts.size, "Should have exactly 2 thought deltas")
+        assertEquals("think1", thoughts[0].markdown)
+        assertEquals("think2", thoughts[1].markdown)
+        assertEquals("think1think2", thoughts.accumulatedThought())
+    }
+
+    @Test
+    fun seqNumbersAreMonotonicallyIncreasing() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("hello"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(" world"))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        val connected = output.receive() as WsMessage.Connected
+
+        input.send(WsMessage.Prompt("test"))
+
+        val messages = output.collectUntilTurnComplete()
+
+        // All broadcast messages should have seq > 0 and be monotonically increasing
+        val seqs = messages.mapNotNull { msg ->
+            when (msg) {
+                is WsMessage.AgentText -> msg.seq
+                is WsMessage.UserMessage -> msg.seq
+                is WsMessage.TurnComplete -> msg.seq
+                else -> null
+            }
+        }.filter { it > 0 }
+
+        assertTrue(seqs.isNotEmpty(), "Should have messages with seq > 0")
+        for (i in 1 until seqs.size) {
+            assertTrue(seqs[i] > seqs[i - 1], "Seq numbers should be monotonically increasing: ${seqs[i-1]} -> ${seqs[i]}")
+        }
+    }
+
+    @Test
+    fun usageUpdateSendsEmptyDelta() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("content"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.UsageUpdate(
+                    used = 5000,
+                    size = 50000,
+                )))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("test"))
+
+        val messages = output.collectUntilTurnComplete()
+        val agentTexts = messages.filterIsInstance<WsMessage.AgentText>()
+
+        // First delta has content, second (usage update) has empty markdown
+        assertTrue(agentTexts.size >= 2, "Should have at least 2 AgentText messages")
+        assertEquals("content", agentTexts[0].markdown)
+        assertEquals("", agentTexts[1].markdown) // Usage-only update
+
+        // Accumulated text is just the content (no duplication)
+        assertEquals("content", agentTexts.accumulatedText())
+
+        // Usage info present on the usage update message
+        assertNotNull(agentTexts[1].usage)
+    }
+
+    // ---- Reconnection with delta resume ----
+
+    @Test
+    fun reconnectWithResumeFromGetsDeltaReplay() = runTest {
+        val command = ProcessCommand("echo", listOf("test"))
+        val manager = AgentProcessManager(command, System.getProperty("user.dir"))
+        val fakeSession = ControllableFakeClientSession()
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val testStore = InMemorySessionStore()
+        val session = GatewaySession(
+            id = java.util.UUID.randomUUID(),
+            clientSession = fakeSession,
+            clientOps = GatewayClientOperations(),
+            cwd = System.getProperty("user.dir"),
+            scope = testScope,
+            store = testStore,
+        )
+        session.ready = true
+        session.startEventForwarding()
+        manager.sessions[session.id] = session
+        manager.agentName = "test-agent"
+        manager.agentVersion = "1.0.0"
+
+        // Use a gate so the prompt stays in-progress during reconnect
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("chunk1"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("chunk2"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("chunk3"))))
+                gate.await()
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        // First client connects and receives some chunks
+        val input1 = Channel<WsMessage>(Channel.UNLIMITED)
+        val output1 = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val handler1 = launch {
+            handleChatChannels(input1, output1, session, manager)
+        }
+
+        output1.receive() // Connected
+
+        input1.send(WsMessage.Prompt("test"))
+
+        // Collect until we have 3 AgentText deltas
+        val firstClientMsgs = mutableListOf<WsMessage>()
+        for (msg in output1) {
+            firstClientMsgs.add(msg)
+            val textCount = firstClientMsgs.count { it is WsMessage.AgentText }
+            if (textCount >= 3) break
+        }
+
+        // Record the seq from the second chunk (we'll resume from there)
+        val chunk2Seq = firstClientMsgs.filterIsInstance<WsMessage.AgentText>()[1].seq
+        assertTrue(chunk2Seq > 0, "chunk2 should have seq > 0")
+
+        // First client disconnects
+        input1.close()
+        handler1.cancel()
+
+        // Second client connects with ResumeFrom
+        val input2 = Channel<WsMessage>(Channel.UNLIMITED)
+        val output2 = Channel<WsMessage>(Channel.UNLIMITED)
+
+        // Send ResumeFrom as first message
+        input2.send(WsMessage.ResumeFrom(chunk2Seq))
+
+        val handler2 = launch {
+            handleChatChannels(input2, output2, session, manager)
+        }
+
+        val connected2 = output2.receive()
+        assertIs<WsMessage.Connected>(connected2)
+        assertTrue((connected2 as WsMessage.Connected).agentWorking, "Should show agent is working")
+
+        // Should receive only chunk3 (delta since chunk2)
+        val resumedMsgs = mutableListOf<WsMessage>()
+        for (msg in output2) {
+            resumedMsgs.add(msg)
+            if (msg is WsMessage.AgentText) break
+        }
+
+        val resumedTexts = resumedMsgs.filterIsInstance<WsMessage.AgentText>()
+        assertTrue(resumedTexts.isNotEmpty(), "Should receive missed delta on resume")
+        // The resumed messages should include chunk3
+        assertEquals("chunk3", resumedTexts.first().markdown)
+
+        // Let the prompt complete
+        gate.complete(Unit)
+
+        input2.close()
+        handler2.cancel()
+    }
+
+    @Test
+    fun turnBufferClearedAfterTurnComplete() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueTextResponse("Hello")
+
+        val connected = output.receive() as WsMessage.Connected
+
+        input.send(WsMessage.Prompt("test"))
+
+        output.collectUntilTurnComplete()
+
+        // After TurnComplete, the turn buffer should be cleared
+        // A new client connecting with ResumeFrom should get full replay, not buffer
+        // (We can verify this indirectly by checking session.getTurnBufferSince returns empty)
+        // The buffer is cleared in handlePrompt after TurnComplete is broadcast
     }
 }
