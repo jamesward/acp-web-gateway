@@ -18,10 +18,12 @@ import io.ktor.server.engine.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import io.ktor.websocket.Frame
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -39,6 +41,8 @@ class RelaySession(val sessionId: UUID) {
     @Volatile
     var switchInProgress: Boolean = false
     val frontendConnections: MutableSet<WebSocketSession> = ConcurrentHashMap.newKeySet()
+    /** Typed channels for RPC clients bridging to this relay (used by ChatServiceImpl). */
+    val rpcChannels: MutableSet<SendChannel<WsMessage>> = ConcurrentHashMap.newKeySet()
     val messageCache = java.util.concurrent.ConcurrentLinkedQueue<String>()
 }
 
@@ -110,16 +114,17 @@ fun Application.module(
         maxFrameSize = Long.MAX_VALUE
     }
 
+    val relaySessions = ConcurrentHashMap<UUID, RelaySession>()
+
     initRpc {
         registerService<IChatService> { call, _ ->
             val sessionId = call.parameters["sessionId"]?.let {
                 try { UUID.fromString(it) } catch (_: Exception) { null }
             }
-            ChatServiceImpl(holder, mode, debug, commandHandler, internalCommands, sessionId)
+            ChatServiceImpl(holder, mode, debug, commandHandler, internalCommands, sessionId,
+                relayLookup = { id -> relaySessions[id] })
         }
     }
-
-    val relaySessions = ConcurrentHashMap<UUID, RelaySession>()
 
     routing {
         when (mode) {
@@ -199,6 +204,7 @@ fun Application.module(
                             if (frame is Frame.Text) {
                                 val text = frame.readText()
                                 relay.messageCache.add(text)
+                                // Forward to raw WebSocket frontend connections
                                 val dead = mutableListOf<WebSocketSession>()
                                 for (conn in relay.frontendConnections) {
                                     try {
@@ -208,6 +214,23 @@ fun Application.module(
                                     }
                                 }
                                 relay.frontendConnections.removeAll(dead.toSet())
+                                // Forward to RPC channel listeners (browser via Kilua RPC)
+                                if (relay.rpcChannels.isNotEmpty()) {
+                                    try {
+                                        val msg = Json.decodeFromString(WsMessage.serializer(), text)
+                                        val deadChannels = mutableListOf<SendChannel<WsMessage>>()
+                                        for (ch in relay.rpcChannels) {
+                                            try {
+                                                ch.trySend(msg)
+                                            } catch (_: Exception) {
+                                                deadChannels.add(ch)
+                                            }
+                                        }
+                                        relay.rpcChannels.removeAll(deadChannels.toSet())
+                                    } catch (_: Exception) {
+                                        // Ignore decode failures
+                                    }
+                                }
                             }
                         }
                     } finally {

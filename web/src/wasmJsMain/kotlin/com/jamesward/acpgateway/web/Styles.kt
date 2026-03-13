@@ -254,6 +254,32 @@ private fun IComponent.agentSelectorStyles() {
         setStyle("-webkit-line-clamp", "2")
         setStyle("-webkit-box-orient", "vertical")
     }
+
+    // Switching agent modal
+    globalStyle(selector = ".switching-agent-dialog") {
+        background = Background(color = bgCard)
+        border = Border(1.px, BorderStyle.Solid, borderSubtle)
+        borderRadius = radiusLg
+        setStyle("padding", "32px 40px")
+        display = Display.Flex
+        flexDirection = FlexDirection.Column
+        alignItems = AlignItems.Center
+        setStyle("gap", "16px")
+        setStyle("text-align", "center")
+    }
+    globalStyle(selector = ".switching-agent-dialog p") {
+        fontSize = 14.px
+        color = textSecondary
+        margin = 0.px
+    }
+    globalStyle(selector = ".switching-spinner") {
+        width = 24.px
+        height = 24.px
+        border = Border(3.px, BorderStyle.Solid, borderSubtle)
+        setStyle("border-top-color", textPrimary.toString())
+        borderRadius = 50.perc
+        setStyle("animation", "spin 0.8s linear infinite")
+    }
 }
 
 // ---- Messages Area ----

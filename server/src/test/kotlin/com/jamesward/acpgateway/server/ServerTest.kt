@@ -9,14 +9,18 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.server.testing.*
+import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -307,6 +311,266 @@ class ServerTest {
         assertEquals(1, blocks.size, "Should have only 1 content block")
         val text = assertIs<ContentBlock.Text>(blocks[0])
         assertEquals("hello", text.text)
+    }
+
+    // --- Proxy mode relay bridging tests ---
+
+    private val testJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    @Test
+    fun proxyModeWithRelaySessionBridgesCachedMessages() = runTest {
+        // Scenario: CLI backend connected and sent messages (cached in relay).
+        // Browser connects via RPC. ChatServiceImpl should replay cached messages
+        // AND supplement with AvailableAgents (which the CLI doesn't send).
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+        relay.agentId = "test-agent"
+
+        // Simulate CLI having sent Connected (CLI doesn't send AvailableAgents)
+        val connectedMsg = WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)
+        relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(), connectedMsg))
+
+        val holder = AgentHolder(
+            listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png")),
+            System.getProperty("user.dir"),
+            GatewayMode.PROXY,
+        )
+
+        val impl = ChatServiceImpl(
+            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        // Should get cached Connected
+        val msg = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.Connected>(msg)
+        assertEquals("Test Agent", msg.agentName)
+
+        // Should get supplemented AvailableAgents with currentAgentId set
+        val agents = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.AvailableAgents>(agents)
+        assertEquals("test-agent", agents.currentAgentId)
+        assertEquals("https://example.com/icon.png", agents.agents.first().icon)
+
+        input.close()
+        job.join()
+    }
+
+    @Test
+    fun proxyModeRelayForwardsInputToBackend() = runTest {
+        // Scenario: Browser sends a message via RPC. ChatServiceImpl should forward it
+        // to the relay's backend WebSocket (the CLI).
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+        relay.agentId = "test-agent"
+
+        // Set up a fake backend WS that captures sent frames
+        val sentFrames = mutableListOf<String>()
+        val fakeBackendWs = object : WebSocketSession {
+            override val incoming get() = throw NotImplementedError()
+            override val outgoing get() = throw NotImplementedError()
+            override val extensions get() = emptyList<WebSocketExtension<*>>()
+            override val coroutineContext get() = this@runTest.coroutineContext
+            override var masking: Boolean = false
+            override var maxFrameSize: Long = Long.MAX_VALUE
+            override suspend fun send(frame: Frame) {
+                if (frame is Frame.Text) sentFrames.add(frame.readText())
+            }
+            override suspend fun flush() {}
+            override fun terminate() {}
+        }
+        relay.backendWs = fakeBackendWs
+
+        // Pre-populate cache so chat() doesn't exit immediately
+        val connectedMsg = WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)
+        relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(), connectedMsg))
+
+        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.PROXY)
+
+        val impl = ChatServiceImpl(
+            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        // Consume the cached Connected
+        withTimeout(5000) { output.receive() }
+
+        // Browser sends a prompt
+        input.send(WsMessage.Prompt("hello from browser"))
+
+        // Close input to end the bridging loop
+        input.close()
+        job.join()
+
+        // The prompt should have been forwarded to the backend WS as JSON
+        assertTrue(sentFrames.isNotEmpty(), "Should forward messages to relay backend")
+        val forwarded = testJson.decodeFromString(WsMessage.serializer(), sentFrames.first())
+        assertIs<WsMessage.Prompt>(forwarded)
+        assertEquals("hello from browser", forwarded.text)
+    }
+
+    @Test
+    fun proxyModeRelaySetsSwitchInProgressOnChangeAgent() = runTest {
+        // When the browser sends ChangeAgent via the relay bridge,
+        // switchInProgress should be set so the relay survives CLI disconnect/reconnect.
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+
+        val sentFrames = mutableListOf<String>()
+        val fakeBackendWs = object : WebSocketSession {
+            override val incoming get() = throw NotImplementedError()
+            override val outgoing get() = throw NotImplementedError()
+            override val extensions get() = emptyList<WebSocketExtension<*>>()
+            override val coroutineContext get() = this@runTest.coroutineContext
+            override var masking: Boolean = false
+            override var maxFrameSize: Long = Long.MAX_VALUE
+            override suspend fun send(frame: Frame) {
+                if (frame is Frame.Text) sentFrames.add(frame.readText())
+            }
+            override suspend fun flush() {}
+            override fun terminate() {}
+        }
+        relay.backendWs = fakeBackendWs
+
+        val holder = AgentHolder(
+            listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0")),
+            System.getProperty("user.dir"),
+            GatewayMode.PROXY,
+        )
+
+        val impl = ChatServiceImpl(
+            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        // Consume the synthesized Connected
+        withTimeout(5000) { output.receive() }
+
+        assertFalse(relay.switchInProgress, "switchInProgress should start false")
+
+        // Browser selects an agent
+        input.send(WsMessage.ChangeAgent("test-agent"))
+
+        // Give time for message to be processed
+        input.close()
+        job.join()
+
+        assertTrue(relay.switchInProgress, "switchInProgress should be set after ChangeAgent")
+
+        // ChangeAgent should have been forwarded to CLI backend
+        assertTrue(sentFrames.isNotEmpty(), "ChangeAgent should be forwarded to backend")
+        val forwarded = testJson.decodeFromString(WsMessage.serializer(), sentFrames.last())
+        assertIs<WsMessage.ChangeAgent>(forwarded)
+        assertEquals("test-agent", forwarded.agentId)
+    }
+
+    @Test
+    fun proxyModeRelaySupplementsLiveConnectedWithAvailableAgents() = runTest {
+        // When the CLI sends a new Connected message (e.g., after agent switch),
+        // the bridge should inject AvailableAgents so the browser gets agent icon info.
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+        relay.agentId = "test-agent"
+
+        val holder = AgentHolder(
+            listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png")),
+            System.getProperty("user.dir"),
+            GatewayMode.PROXY,
+        )
+
+        val impl = ChatServiceImpl(
+            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        // Consume the synthesized initial Connected + AvailableAgents + AvailableCommands
+        withTimeout(5000) { output.receive() } // Connected
+        withTimeout(5000) { output.receive() } // AvailableAgents
+        withTimeout(5000) { output.receive() } // AvailableCommands
+
+        // Simulate CLI sending a live Connected after agent switch
+        relay.rpcChannels.first().trySend(
+            WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)
+        )
+
+        // Should get the Connected
+        val connected = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.Connected>(connected)
+
+        // Should get supplemented AvailableAgents right after
+        val agents = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.AvailableAgents>(agents)
+        assertEquals("test-agent", agents.currentAgentId)
+        assertEquals("https://example.com/icon.png", agents.agents.first().icon)
+
+        input.close()
+        job.join()
+    }
+
+    @Test
+    fun proxyModeRelayWithEmptyCacheSendsAgentSelector() = runTest {
+        // Scenario: CLI connected without --agent. No messages cached yet.
+        // Browser connects via RPC. Should see agent selector, not a blank screen.
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+        // relay.agentId is null — no agent selected yet
+        // relay.messageCache is empty
+
+        val holder = AgentHolder(
+            listOf(
+                RegistryAgent(id = "agent-a", name = "Agent A", version = "1.0"),
+                RegistryAgent(id = "agent-b", name = "Agent B", version = "2.0"),
+            ),
+            System.getProperty("user.dir"),
+            GatewayMode.PROXY,
+        )
+
+        val impl = ChatServiceImpl(
+            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        // Should synthesize a Connected message
+        val connected = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.Connected>(connected)
+        assertEquals("No agent selected", connected.agentName)
+
+        // Should send available agents
+        val agents = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.AvailableAgents>(agents)
+        assertEquals(2, agents.agents.size)
+
+        // Should send available commands
+        val commands = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.AvailableCommands>(commands)
+
+        input.close()
+        job.join()
     }
 
     @Test

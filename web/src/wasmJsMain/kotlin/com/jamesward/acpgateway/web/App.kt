@@ -208,6 +208,7 @@ class App : Application() {
     // Agent selector state
     private var availableAgents by mutableStateOf(listOf<AgentInfo>())
     private var currentAgentId by mutableStateOf<String?>(null)
+    private var switchingAgent by mutableStateOf<String?>(null)
     private var showAgentSelector by mutableStateOf(false)
 
     // File attachment state
@@ -334,6 +335,10 @@ class App : Application() {
                 agentName = msg.agentName
                 agentVersion = msg.agentVersion
                 cwd = msg.cwd
+                // Clear switching modal when the new agent is ready
+                if (switchingAgent != null && msg.agentName != "No agent selected") {
+                    switchingAgent = null
+                }
                 // Reset state on fresh connect (not a delta resume)
                 if (!didResume) {
                     messages = emptyList()
@@ -479,6 +484,11 @@ class App : Application() {
         // Agent selector
         if (showAgentSelector && availableAgents.isNotEmpty()) {
             agentSelectorView()
+        }
+
+        val switching = switchingAgent
+        if (switching != null) {
+            switchingAgentModal(switching)
         }
 
         // Messages container
@@ -693,6 +703,7 @@ class App : Application() {
                                     permissionRequest = null
                                     agentWorking = false
                                     showAgentSelector = false
+                                    switchingAgent = agent.name
                                 }
                             }
                             if (agent.icon != null) {
@@ -714,6 +725,16 @@ class App : Application() {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun IComponent.switchingAgentModal(name: String) {
+        div(className = "agent-selector-overlay") {
+            div(className = "switching-agent-dialog") {
+                div(className = "switching-spinner")
+                p { +"Switching to $name\u2026" }
             }
         }
     }
