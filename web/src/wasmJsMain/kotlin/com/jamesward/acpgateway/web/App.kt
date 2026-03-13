@@ -651,9 +651,13 @@ class App : Application() {
                 val contentHtml = tc.contentHtml
                 val contentText = tc.content
                 if (contentHtml != null) {
+                    // Legacy: pre-rendered HTML from older sessions
                     div(className = "tool-content") { rawHtml(contentHtml) }
                 } else if (!contentText.isNullOrEmpty()) {
-                    div(className = "tool-content") { pre { +contentText } }
+                    // Render through markdown for syntax-highlighted diffs and code blocks
+                    div(className = "tool-content msg-body") {
+                        rawHtml(dev.kilua.marked.parseMarkdown(contentText))
+                    }
                 }
             }
         } else {

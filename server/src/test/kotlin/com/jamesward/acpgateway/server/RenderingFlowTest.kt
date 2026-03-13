@@ -14,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 /**
  * Tests the message flow: given specific ACP events from the agent,
@@ -552,9 +553,11 @@ class RenderingFlowTest {
         val toolCalls = messages.filterIsInstance<WsMessage.ToolCall>()
         val completed = toolCalls.last { it.status == ToolStatus.Completed }
 
-        assertNotNull(completed.contentHtml, "Diff should produce contentHtml")
-        assertTrue(completed.contentHtml!!.contains("diff-add") || completed.contentHtml!!.contains("diff-del"),
-            "Diff HTML should contain diff classes")
+        assertNotNull(completed.content, "Diff should produce content text")
+        assertTrue(completed.content!!.contains("```diff"), "Diff content should be a markdown diff code block")
+        assertTrue(completed.content!!.contains("-val x = 1"), "Diff should contain removed line")
+        assertTrue(completed.content!!.contains("+val x = 2"), "Diff should contain added line")
+        assertNull(completed.contentHtml, "Diff should not produce contentHtml (rendered client-side)")
     }
 
     // ---- Tool call with kind and location ----

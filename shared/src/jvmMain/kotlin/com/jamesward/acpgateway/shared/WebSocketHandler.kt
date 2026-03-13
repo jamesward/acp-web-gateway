@@ -60,13 +60,11 @@ fun PermissionOptionKind.toGatewayKind(): PermissionKind = when (this) {
     PermissionOptionKind.REJECT_ALWAYS -> PermissionKind.RejectAlways
 }
 
-private data class ToolContent(val text: String? = null, val html: String? = null)
+private data class ToolContent(val text: String? = null)
 
 private fun extractToolContent(content: List<ToolCallContent>?): ToolContent? {
     if (content.isNullOrEmpty()) return null
     val textParts = mutableListOf<String>()
-    val htmlParts = mutableListOf<String>()
-    var hasDiff = false
     for (tc in content) {
         when (tc) {
             is ToolCallContent.Content -> {
@@ -76,46 +74,25 @@ private fun extractToolContent(content: List<ToolCallContent>?): ToolContent? {
                 }
             }
             is ToolCallContent.Diff -> {
-                hasDiff = true
-                htmlParts.add(renderDiffHtml(tc.path, tc.oldText, tc.newText))
+                textParts.add(renderDiffMarkdown(tc.path, tc.oldText, tc.newText))
             }
             is ToolCallContent.Terminal -> textParts.add("Terminal: ${tc.terminalId}")
         }
     }
-    if (textParts.isEmpty() && htmlParts.isEmpty()) return null
-    val text = if (textParts.isNotEmpty()) {
-        val joined = textParts.joinToString("\n")
-        if (joined.length > 2000) joined.take(2000) + "..." else joined
-    } else null
-    val html = if (htmlParts.isNotEmpty()) htmlParts.joinToString("") else null
-    return if (hasDiff) ToolContent(html = (html.orEmpty()) + (text?.let { "<pre>$it</pre>" }.orEmpty()))
-    else ToolContent(text = text)
+    if (textParts.isEmpty()) return null
+    val joined = textParts.joinToString("\n")
+    val text = if (joined.length > 2000) joined.take(2000) + "..." else joined
+    return ToolContent(text = text)
 }
 
-private fun renderDiffHtml(path: String, oldText: String?, newText: String): String {
+internal fun renderDiffMarkdown(path: String, oldText: String?, newText: String): String {
     val oldLines = oldText?.lines() ?: emptyList()
     val newLines = newText.lines()
     val patch = DiffUtils.diff(oldLines, newLines)
     val fileName = path.substringAfterLast('/')
     val unifiedDiff = UnifiedDiffUtils.generateUnifiedDiff(fileName, fileName, oldLines, patch, 3)
-    if (unifiedDiff.isEmpty()) return "<div>No changes</div>"
-    val sb = StringBuilder()
-    for (line in unifiedDiff) {
-        val escaped = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        val cls = when {
-            line.startsWith("+++") || line.startsWith("---") -> "diff-hunk"
-            line.startsWith("@@") -> "diff-hunk"
-            line.startsWith("+") -> "diff-add"
-            line.startsWith("-") -> "diff-del"
-            else -> ""
-        }
-        if (cls.isNotEmpty()) {
-            sb.append("<span class=\"$cls\">$escaped</span>\n")
-        } else {
-            sb.append("$escaped\n")
-        }
-    }
-    return sb.toString()
+    if (unifiedDiff.isEmpty()) return "No changes"
+    return "```diff\n${unifiedDiff.joinToString("\n")}\n```"
 }
 
 // Per-prompt usage tracking
@@ -508,7 +485,6 @@ private suspend fun handlePrompt(
                                 title = update.title,
                                 status = status,
                                 content = toolContent?.text ?: "",
-                                contentHtml = toolContent?.html ?: "",
                                 kind = update.kind.toToolKind(),
                                 location = update.locations.firstOrNull()?.path,
                             ))
@@ -517,7 +493,6 @@ private suspend fun handlePrompt(
                                 title = update.title,
                                 status = status,
                                 content = toolContent?.text,
-                                contentHtml = toolContent?.html,
                                 kind = update.kind.toToolKind(),
                                 location = update.locations.firstOrNull()?.path,
                             ))
@@ -544,7 +519,6 @@ private suspend fun handlePrompt(
                                     title = if (update.title.isNullOrEmpty()) entry.title else update.title!!,
                                     status = status,
                                     content = updateContent?.text ?: entry.content,
-                                    contentHtml = updateContent?.html ?: entry.contentHtml,
                                     kind = update.kind.toToolKind() ?: entry.kind,
                                     location = update.locations?.firstOrNull()?.path ?: entry.location,
                                 )
@@ -556,7 +530,6 @@ private suspend fun handlePrompt(
                                 title = resolvedTitle,
                                 status = status,
                                 content = updateContent?.text ?: entry?.content?.ifEmpty { null },
-                                contentHtml = updateContent?.html ?: entry?.contentHtml?.ifEmpty { null },
                                 kind = update.kind.toToolKind() ?: entry?.kind,
                                 location = update.locations?.firstOrNull()?.path ?: entry?.location,
                             ))
