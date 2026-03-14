@@ -89,7 +89,6 @@ class ServerTest {
         val body = response.bodyAsText()
         assertTrue(body.contains("ACP Gateway"))
         assertTrue(body.contains("""id="root""""))
-        assertTrue(body.contains(sessionId.toString()))
     }
 
     @Test

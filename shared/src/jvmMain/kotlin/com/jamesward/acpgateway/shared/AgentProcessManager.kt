@@ -209,6 +209,7 @@ class GatewaySession(
 
     suspend fun prompt(text: String, screenshot: String? = null, files: List<FileAttachment> = emptyList()): Flow<Event> {
         store.addHistory(id, ChatEntry(role = "user", content = text, timestamp = System.currentTimeMillis(), fileNames = files.map { it.name }.ifEmpty { null }))
+        val inlinedTextParts = mutableListOf<String>()
         val contentBlocks = buildList {
             if (screenshot != null) {
                 add(ContentBlock.Image(data = screenshot, mimeType = "image/png"))
@@ -219,23 +220,24 @@ class GatewaySession(
 
                 if (file.mimeType.startsWith("image/")) {
                     add(ContentBlock.Image(data = file.data, mimeType = file.mimeType))
+                } else if (file.mimeType.startsWith("text/") || file.isLikelyText()) {
+                    val decoded = java.util.Base64.getDecoder().decode(file.data).toString(Charsets.UTF_8)
+                    inlinedTextParts.add("[File: ${file.name}]\n$decoded")
                 } else {
-                    val embeddedResource = if (file.mimeType.startsWith("text/") || file.isLikelyText()) {
-                        val decoded = java.util.Base64.getDecoder().decode(file.data).toString(Charsets.UTF_8)
-                        EmbeddedResourceResource.TextResourceContents(decoded, "file:///${file.name}", file.mimeType)
-                    } else {
-                        EmbeddedResourceResource.BlobResourceContents(
-                            blob = file.data,
-                            uri = "file:///${file.name}",
-                            mimeType = file.mimeType,
-                        )
-                    }
-
-                    add(ContentBlock.Resource(embeddedResource))
+                    add(ContentBlock.Resource(EmbeddedResourceResource.BlobResourceContents(
+                        blob = file.data,
+                        uri = "file:///${file.name}",
+                        mimeType = file.mimeType,
+                    )))
                 }
             }
 
-            add(ContentBlock.Text(text))
+            val fullText = if (inlinedTextParts.isNotEmpty()) {
+                inlinedTextParts.joinToString("\n\n") + "\n\n" + text
+            } else {
+                text
+            }
+            add(ContentBlock.Text(fullText))
         }
         return clientSession.prompt(contentBlocks)
     }

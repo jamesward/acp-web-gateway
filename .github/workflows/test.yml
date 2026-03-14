@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -27,4 +28,4 @@ jobs:
         run: ./gradlew :server:browserTest
 
       - name: Agent integration tests
-        run: ./gradlew :server:integrationTest -Dtest.acp.agent=github-copilot-cli
+        run: ./gradlew :server:integrationTest

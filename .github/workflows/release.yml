@@ -10,7 +10,11 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   build-cli:
+    needs: test
     strategy:
       fail-fast: true
       matrix:
