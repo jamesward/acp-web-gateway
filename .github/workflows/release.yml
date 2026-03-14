@@ -87,7 +87,7 @@ jobs:
     needs: [build-cli, build-and-push-server]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
