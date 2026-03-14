@@ -53,7 +53,9 @@ jobs:
       - name: Package CLI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path cli/build/jpackage/acp2web -DestinationPath cli/build/dist/acp2web-${{ matrix.name }}.zip
+        run: |
+          New-Item -ItemType Directory -Force -Path cli/build/dist
+          Compress-Archive -Path cli/build/jpackage/acp2web -DestinationPath cli/build/dist/acp2web-${{ matrix.name }}.zip
 
       - name: Upload CLI artifact (Windows)
         if: runner.os == 'Windows'
