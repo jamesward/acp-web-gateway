@@ -7,7 +7,7 @@ plugins {
     id("org.jetbrains.compose") version "1.11.0-alpha04" apply false
     id("io.ktor.plugin") version "3.4.1" apply false
     id("dev.kilua") version "0.0.32" apply false
-    id("com.google.devtools.ksp") version "2.3.5" apply false
+    id("com.google.devtools.ksp") version "2.3.6" apply false
     id("dev.kilua.rpc") version "0.0.42" apply false
     id("org.beryx.runtime") version "2.0.1" apply false
     id("com.google.cloud.tools.jib") version "3.5.3" apply false
