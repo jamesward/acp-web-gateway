@@ -39,7 +39,7 @@ kotlin {
             implementation("io.ktor:ktor-client-cio:$ktorVersion")
             implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
             implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
-            implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.7.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.9.0")
             implementation("io.github.java-diff-utils:java-diff-utils:4.15")
             implementation("ch.qos.logback:logback-classic:1.5.18")
         }
