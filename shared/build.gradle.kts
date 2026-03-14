@@ -7,7 +7,7 @@ plugins {
 }
 
 val ktorVersion = "3.4.1"
-val acpSdkVersion = "0.16.5"
+val acpSdkVersion = "0.16.6"
 val kiluaRpcVersion = "0.0.42"
 
 extensions.configure<dev.kilua.rpc.gradle.KiluaRpcExtension> {
