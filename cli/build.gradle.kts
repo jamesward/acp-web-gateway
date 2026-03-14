@@ -33,11 +33,11 @@ runtime {
 
     jpackage {
         imageName = "acp2web"
-        // jpackage requires a numeric version; git versions like "ad5a7e0" or "1.0.0-3-gabcdef" aren't valid
-        appVersion = project.version.toString()
-            .replace(Regex("^[^0-9]*"), "")       // strip leading non-digits
+        // jpackage requires numeric version (macOS additionally requires first segment > 0)
+        val v = project.version.toString()
+            .replace(Regex("^[^0-9]*"), "")       // strip leading non-digits (e.g. "v")
             .replace(Regex("[^0-9.].*"), "")       // strip everything after first non-numeric segment
-            .ifEmpty { "0.0.0" }
+        appVersion = v.ifEmpty { "1.0.0" }
     }
 }
 
