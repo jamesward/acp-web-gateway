@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-cli:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            name: macos-arm64
+          - os: ubuntu-latest
+            name: linux-amd64
+          - os: windows-latest
+            name: windows-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build CLI (Unix)
+        if: runner.os != 'Windows'
+        run: ./gradlew :cli:packageExecutable
+
+      - name: Rename CLI artifact (Unix)
+        if: runner.os != 'Windows'
+        run: mv cli/build/dist/acp2web cli/build/dist/acp2web-${{ matrix.name }}
+
+      - name: Upload CLI artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.name }}
+          path: cli/build/dist/acp2web-${{ matrix.name }}
+
+      - name: Build CLI (Windows)
+        if: runner.os == 'Windows'
+        run: ./gradlew :cli:jpackageImage
+
+      - name: Package CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path cli/build/jpackage/acp2web -DestinationPath cli/build/dist/acp2web-${{ matrix.name }}.zip
+
+      - name: Upload CLI artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.name }}
+          path: cli/build/dist/acp2web-${{ matrix.name }}.zip
+
+  build-and-push-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and push multi-arch image
+        run: |
+          ./gradlew :server:jib \
+            -Djib.to.image=ghcr.io/${{ github.repository }} \
+            -Djib.to.auth.username=${{ github.actor }} \
+            -Djib.to.auth.password=${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: [build-cli, build-and-push-server]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/cli-macos-arm64/acp2web-macos-arm64
+            artifacts/cli-linux-amd64/acp2web-linux-amd64
+            artifacts/cli-windows-amd64/acp2web-windows-amd64.zip

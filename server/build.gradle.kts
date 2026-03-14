@@ -3,6 +3,7 @@ plugins {
     kotlin("plugin.serialization")
     kotlin("plugin.power-assert")
     id("io.ktor.plugin")
+    id("com.google.cloud.tools.jib")
 }
 
 kotlin {
@@ -80,7 +81,33 @@ tasks.register<Test>("browserTest") {
     }
 }
 
-val isProduction = gradle.startParameter.taskNames.any { "stage" in it || "installDist" in it }
+val isProduction = gradle.startParameter.taskNames.any { "stage" in it || "installDist" in it || "jib" in it.lowercase() }
+
+jib {
+    from {
+        image = "eclipse-temurin:21-jre"
+        platforms {
+            platform {
+                architecture = "amd64"
+                os = "linux"
+            }
+            platform {
+                architecture = "arm64"
+                os = "linux"
+            }
+        }
+    }
+    to {
+        image = project.findProperty("jib.to.image")?.toString() ?: "ghcr.io/acp-web-gateway"
+        tags = (project.findProperty("jib.to.tags")?.toString()
+            ?: "${project.version},latest").split(",").toSet()
+    }
+    container {
+        mainClass = "com.jamesward.acpgateway.server.ServerKt"
+        ports = listOf("8080")
+        args = listOf("--proxy")
+    }
+}
 
 val copyWasm = tasks.register<Copy>("copyWasmAssets") {
     if (isProduction) {

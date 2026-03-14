@@ -9,6 +9,14 @@ plugins {
     id("dev.kilua") version "0.0.32" apply false
     id("com.google.devtools.ksp") version "2.3.5" apply false
     id("dev.kilua.rpc") version "0.0.42" apply false
+    id("org.beryx.runtime") version "2.0.1" apply false
+    id("com.google.cloud.tools.jib") version "3.4.4" apply false
+    id("com.palantir.git-version") version "4.3.0"
+}
+
+val gitVersion: groovy.lang.Closure<String> by extra
+allprojects {
+    version = gitVersion()
 }
 
 tasks.register("stage") {
