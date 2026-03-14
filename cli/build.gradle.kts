@@ -43,24 +43,34 @@ runtime {
 }
 
 // Creates a single self-extracting executable that bundles the entire jpackage app-image.
-// Extracts to ~/.local/share/acp2web/<checksum>/ on first run, skips if dir exists.
+// Extracts to ~/.local/share/acp2web/<version>/ on first run, skips if dir exists.
+// Handles both Linux (acp2web/bin/acp2web) and macOS (acp2web.app/Contents/MacOS/acp2web) layouts.
 tasks.register("packageExecutable") {
     description = "Creates a single self-extracting executable"
     group = "distribution"
     dependsOn("jpackageImage")
 
-    val appImageDir = layout.buildDirectory.dir("jpackage/acp2web")
+    val jpackageDir = layout.buildDirectory.dir("jpackage")
     val outputFile = layout.buildDirectory.file("dist/acp2web")
-    inputs.dir(appImageDir)
+    inputs.dir(jpackageDir)
     outputs.file(outputFile)
 
     doLast {
         val distDir = outputFile.get().asFile.parentFile
         distDir.mkdirs()
 
+        val jpDir = jpackageDir.get().asFile
+        // Find the app image: "acp2web" on Linux, "acp2web.app" on macOS
+        val appDir = jpDir.listFiles()?.firstOrNull { it.name.startsWith("acp2web") }
+            ?: error("No jpackage output found in ${jpDir.absolutePath}")
+        val isMacOS = appDir.name.endsWith(".app")
+
+        // Launcher path relative to extracted dir
+        val launcherPath = if (isMacOS) "Contents/MacOS/acp2web" else "bin/acp2web"
+
         val tarFile = File(distDir, "acp2web.tar.gz")
-        ProcessBuilder("tar", "czf", tarFile.absolutePath, "acp2web")
-            .directory(layout.buildDirectory.dir("jpackage").get().asFile)
+        ProcessBuilder("tar", "czf", tarFile.absolutePath, appDir.name)
+            .directory(jpDir)
             .inheritIO()
             .start()
             .waitFor()
@@ -76,7 +86,7 @@ tasks.register("packageExecutable") {
             |  mkdir -p "${'$'}INSTALL_DIR"
             |  tail -c +ARCHIVE_OFFSET "${'$'}0" | tar xz -C "${'$'}INSTALL_DIR" --strip-components=1
             |fi
-            |exec "${'$'}INSTALL_DIR/bin/acp2web" "${'$'}@"
+            |exec "${'$'}INSTALL_DIR/$launcherPath" "${'$'}@"
             |
         """.trimMargin()
 
