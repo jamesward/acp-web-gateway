@@ -37,7 +37,8 @@ runtime {
         val v = project.version.toString()
             .replace(Regex("^[^0-9]*"), "")       // strip leading non-digits (e.g. "v")
             .replace(Regex("[^0-9.].*"), "")       // strip everything after first non-numeric segment
-        appVersion = v.ifEmpty { "1.0.0" }
+        // macOS jpackage rejects versions starting with 0 — ensure first segment >= 1
+        appVersion = v.ifEmpty { "1.0.0" }.replace(Regex("^0\\."), "1.")
     }
 }
 

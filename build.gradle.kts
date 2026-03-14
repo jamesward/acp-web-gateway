@@ -16,7 +16,7 @@ plugins {
 
 val gitVersion: groovy.lang.Closure<String> by extra
 allprojects {
-    version = gitVersion()
+    version = try { gitVersion() } catch (_: Exception) { "unspecified" }
 }
 
 tasks.register("stage") {

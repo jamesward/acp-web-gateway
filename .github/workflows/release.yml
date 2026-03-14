@@ -63,6 +63,7 @@ jobs:
           path: cli/build/dist/acp2web-${{ matrix.name }}.zip
 
   build-and-push-server:
+    needs: build-cli
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
