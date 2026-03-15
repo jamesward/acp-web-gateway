@@ -10,6 +10,7 @@ import com.jamesward.acpgateway.shared.RegistryAgent
 import com.jamesward.acpgateway.shared.WsMessage
 import com.jamesward.acpgateway.shared.fetchRegistry
 import com.jamesward.acpgateway.shared.handleChatWebSocket
+import com.jamesward.acpgateway.shared.parseCommandString
 import com.jamesward.acpgateway.shared.resolveAgentCommand
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
@@ -25,9 +26,14 @@ private val json = Json { ignoreUnknownKeys = true }
 
 class Acp2Web : CliktCommand(name = "acp2web") {
     val agent by option("--agent", help = "Agent ID from the ACP registry")
+    val agentCommand by option("--agent-command", help = "Custom agent command (e.g. \"kiro-cli acp\")")
     val gateway by option("--gateway", help = "Gateway server URL").default("https://www.acp2web.com")
 
     override fun run() {
+        require(agent == null || agentCommand == null) {
+            "--agent and --agent-command are mutually exclusive"
+        }
+
         runBlocking {
             val registry = fetchRegistry()
             val workingDir = System.getProperty("user.dir")
@@ -45,6 +51,12 @@ class Acp2Web : CliktCommand(name = "acp2web") {
             var currentAgentId: String? = agent
             var currentManager: AgentProcessManager? = null
 
+            // Start custom agent command immediately if specified
+            if (agentCommand != null) {
+                currentManager = startAgentFromCommand(agentCommand!!, workingDir)
+                echo("Agent: ${currentManager.agentName} ${currentManager.agentVersion}")
+            }
+
             // Shutdown hook cleans up the current manager
             val shutdownHook = Thread({
                 currentManager?.close()
@@ -58,13 +70,13 @@ class Acp2Web : CliktCommand(name = "acp2web") {
             try {
                 // Main agent lifecycle loop: handles initial selection and switching
                 while (true) {
-                    // Start agent if we know which one to use
+                    // Start agent if we know which one to use (skip if custom command already started)
                     if (currentAgentId != null && currentManager == null) {
                         currentManager = startAgent(currentAgentId!!, registry, workingDir)
-                        echo("Agent: ${currentManager!!.agentName} ${currentManager!!.agentVersion}")
+                        echo("Agent: ${currentManager.agentName} ${currentManager.agentVersion}")
                     }
 
-                    val wsUrl = if (currentAgentId != null) "$wsBase?agent=$currentAgentId" else wsBase
+                    val wsUrl = if (currentAgentId != null || agentCommand != null) "$wsBase?agent=${currentAgentId ?: "custom"}" else wsBase
                     var justSelectedAgent = false
 
                     try {
@@ -131,6 +143,13 @@ private fun startAgent(agentId: String, registry: List<RegistryAgent>, workingDi
     val registryAgent = registry.find { it.id == agentId }
         ?: error("Agent '$agentId' not found in registry. Available: ${registry.map { it.id }}")
     val command = resolveAgentCommand(registryAgent)
+    val manager = AgentProcessManager(command, workingDir)
+    runBlocking { manager.start() }
+    return manager
+}
+
+private fun startAgentFromCommand(commandString: String, workingDir: String): AgentProcessManager {
+    val command = parseCommandString(commandString)
     val manager = AgentProcessManager(command, workingDir)
     runBlocking { manager.start() }
     return manager

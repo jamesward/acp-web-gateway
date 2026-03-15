@@ -4,7 +4,7 @@ A web interface to AI agents via the [Agent Client Protocol](https://agentclient
 
 ## Project Structure
 
-Three Gradle modules (Kotlin 2.3, JVM 21):
+Three Gradle modules (Kotlin 2.3, JVM 25):
 
 ```
 shared/   — Kotlin Multiplatform (JVM + WasmJS). Message types, WebSocket handler, ACP SDK integration. Kilua RPC service interface.

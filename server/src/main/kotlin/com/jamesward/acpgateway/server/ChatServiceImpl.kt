@@ -36,8 +36,17 @@ class ChatServiceImpl(
         while (true) {
             val manager = holder.manager
             if (manager == null) {
+                // Send startup error if the agent failed to start
+                val err = holder.startupError
+                if (err != null) {
+                    output.send(WsMessage.Connected("Agent failed to start", "", agentWorking = false))
+                    output.send(WsMessage.Error(err))
+                    holder.startupError = null
+                }
                 // No agent selected — wait for a ChangeAgent message
-                output.send(WsMessage.Connected("No agent selected", "", agentWorking = false))
+                if (err == null) {
+                    output.send(WsMessage.Connected("No agent selected", "", agentWorking = false))
+                }
                 if (holder.registry.isNotEmpty()) {
                     output.send(WsMessage.AvailableAgents(
                         agents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
@@ -47,7 +56,13 @@ class ChatServiceImpl(
                 }
                 val agentId = waitForChangeAgent(input)
                     ?: return // Client disconnected
-                holder.switchAgent(agentId)
+                try {
+                    holder.switchAgent(agentId)
+                } catch (e: Exception) {
+                    logger.error("Failed to start agent '{}'", agentId, e)
+                    output.send(WsMessage.Error("Failed to start agent '$agentId': ${e.message}"))
+                    // Loop continues — user can select a different agent
+                }
                 continue
             }
             val session = if (mode == GatewayMode.LOCAL) {
@@ -70,7 +85,12 @@ class ChatServiceImpl(
                 )
                 return // Normal exit (client disconnected)
             } catch (e: AgentSwitchException) {
-                holder.switchAgent(e.agentId)
+                try {
+                    holder.switchAgent(e.agentId)
+                } catch (startErr: Exception) {
+                    logger.error("Failed to switch to agent '{}'", e.agentId, startErr)
+                    output.send(WsMessage.Error("Failed to start agent '${e.agentId}': ${startErr.message}"))
+                }
                 // Loop continues — new manager/session will be resolved at top of loop
             }
         }

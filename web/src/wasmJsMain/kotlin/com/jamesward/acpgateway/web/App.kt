@@ -210,6 +210,7 @@ class App : Application() {
     private var currentAgentId by mutableStateOf<String?>(null)
     private var switchingAgent by mutableStateOf<String?>(null)
     private var showAgentSelector by mutableStateOf(false)
+    private var agentError by mutableStateOf<String?>(null)
 
     // File attachment state
     private var pendingFiles by mutableStateOf(listOf<FileAttachment>())
@@ -335,9 +336,10 @@ class App : Application() {
                 agentName = msg.agentName
                 agentVersion = msg.agentVersion
                 cwd = msg.cwd
-                // Clear switching modal when the new agent is ready
-                if (switchingAgent != null && msg.agentName != "No agent selected") {
+                // Clear switching modal and errors when the new agent is ready
+                if (msg.agentName != "No agent selected" && msg.agentName != "Agent failed to start") {
                     switchingAgent = null
+                    agentError = null
                 }
                 // Reset state on fresh connect (not a delta resume)
                 if (!didResume) {
@@ -426,6 +428,9 @@ class App : Application() {
             }
             is WsMessage.Error -> {
                 messages = messages + ChatMessage.Error(msg.message)
+                agentError = msg.message
+                switchingAgent = null
+                agentWorking = false
             }
             is WsMessage.AvailableAgents -> {
                 availableAgents = msg.agents
@@ -693,6 +698,10 @@ class App : Application() {
             div(className = "agent-selector-dialog") {
                 onClick { it.stopPropagation() }
                 h3 { +"Select an Agent" }
+                val err = agentError
+                if (err != null) {
+                    div(className = "msg-error") { +err }
+                }
                 div(className = "agent-selector-list") {
                     for (agent in availableAgents) {
                         val isCurrent = agent.id == currentAgentId

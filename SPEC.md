@@ -13,7 +13,7 @@ https://agentclientprotocol.com/
 
 - Users start the ACP Web Gateway on their machine in the context of a project
 - When users launch the gateway, they specify which agent from the registry (https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json) to use via `--agent <id>` CLI flag
-- **[NOT YET IMPLEMENTED]** Alternatively, users can specify a custom agent command not in the registry via `--agent-command <command>` (e.g. `--agent-command "kiro-cli acp"`). The command string is split on whitespace into the executable and its arguments. Since this agent isn't from the registry, there is no metadata (icon, display name, description, version). The gateway uses the executable name as a fallback display name and shows a generic icon. The `--agent` and `--agent-command` flags are mutually exclusive.
+- Alternatively, users can specify a custom agent command not in the registry via `--agent-command <command>` (e.g. `--agent-command "kiro-cli acp"`). The command string is split on whitespace into the executable and its arguments. Since this agent isn't from the registry, there is no metadata (icon, display name, description, version). The gateway uses the executable name as a fallback display name and shows a generic icon. The `--agent` and `--agent-command` flags are mutually exclusive.
 - Users can choose to run in **local mode** (single session, default) or **proxy mode** (multi-session, `--proxy` flag)
 - In proxy mode the ACP Web Gateway runs somewhere else and the user provides the base URL. Initialization creates a UUID for the session. The user can then interact with that session using the base URL / UUID
 - Users perform normal AI code assistant interactions via the web gateway:
@@ -112,6 +112,93 @@ Both local and proxy modes support automatic reconnection with no user action re
 - On browser reconnect, the turn buffer provides exactly-once delivery for messages within the current turn. Completed turns are in the chat history and replayed from the session store, not the turn buffer.
 - If `lastSeq` is older than the turn buffer's earliest entry (e.g. very long disconnection spanning multiple turns), the server falls back to sending full history from the session store followed by the current turn buffer.
 
+### Client (Web Module)
+
+The browser client is a Kotlin/WasmJS application built with the Kilua framework (Compose Runtime-based). It renders all UI client-side using composable functions with reactive state, communicating with the server via Kilua RPC typed WebSocket channels.
+
+#### Application Structure
+
+- `App.kt` — Single `Application` subclass containing all state, message handling, composable UI, and actions.
+- `Styles.kt` — All CSS defined via Kilua `globalStyle()` composables, organized by UI section (header, messages, tools, permissions, input bar, markdown, etc.). Dark theme with GitHub-inspired color palette.
+- Entry point: `startApplication(::App)` boots the Kilua framework, which mounts the composable tree into `<div id="root">`.
+
+#### State Management
+
+All UI state is held as `mutableStateOf()` properties on the `App` class. Key state groups:
+
+- **Connection**: `connected`, `agentName`, `agentVersion`, `cwd`, `agentWorking`, `lastSeq` (for reconnect delta resume), `reconnectDelay` (exponential backoff 1s–30s).
+- **Conversation**: `messages` (list of sealed `ChatMessage` variants: `User`, `Assistant`, `Thought`, `ToolBlock`, `Error`), plus in-progress accumulators `currentResponse`, `currentThought` (Triple of id, accumulated markdown, usage), and `currentToolCalls` (list of `ToolCallState`).
+- **Permissions**: `permissionRequest` holds the current `PermissionRequest` message; cleared on response.
+- **Agent selector**: `availableAgents`, `currentAgentId`, `showAgentSelector`, `switchingAgent` (shows a spinner modal during switch).
+- **File attachments**: `pendingFiles` list, populated via file picker, drag-drop, or paste.
+- **Debug/dev**: `debugMode` / `devMode` (read from `<body>` data attributes at startup), `screenshotEnabled`, `reloading`.
+- **Autocomplete**: `availableCommands` (from server), `autocompleteFiltered`, `autocompleteSelectedIndex`.
+- **Scroll**: `atBottom` (tracked via JS scroll listener polling), `collapseBeforeIndex` (older messages render collapsed).
+- **Timer**: `elapsedSeconds` with a coroutine-based timer job shown on thought bubbles during agent work.
+
+#### Composable UI Components
+
+- **Header** — Agent icon (from registry), agent name, working directory, agent switch button (when multiple agents available), reload button (dev mode).
+- **Agent selector overlay** — Modal listing available agents with icons, names, descriptions, and "current" badge. Clicking an agent sends `ChangeAgent` and shows a switching spinner modal.
+- **Messages container** (`#messages`) — Scrollable list of `ChatMessage` variants:
+  - `User` — Blue bubble with text and file attachment tags.
+  - `Assistant` — Collapsible `<details>` card with markdown body rendered via `parseMarkdown()` (Kilua's marked wrapper). Shows usage stats in summary.
+  - `Thought` — Collapsible card with yellow left border, italic text, elapsed timer shown during active thinking.
+  - `ToolBlock` — Collapsible card summarizing tool calls (count, done/failed/running stats, active tool name). Each tool row shows status icon (checkmark/cross/circle), tool name, location, and expandable content rendered as markdown.
+  - `Error` — Red-bordered message block.
+- **In-progress turn** — Current thought, tool calls, and response render below completed messages with live streaming updates.
+- **Scroll-to-bottom button** — Floating circular button appears when user scrolls up, auto-scroll on new content when at bottom.
+- **Input bar** — File preview chips (removable), slash command autocomplete popup (arrow key / Tab / Escape navigation), textarea with Enter-to-send (Shift+Enter for newline), attach button (file picker), Send/Cancel/Diagnose buttons, Screenshot checkbox and Download Log button (debug mode).
+- **Permission dialog** — Fixed overlay with title, description, and dynamically rendered option buttons from the agent's permission request.
+
+#### JS Bridge Layer (`@JsFun`)
+
+The Kotlin/Wasm client uses `@JsFun` annotated external functions to bridge to browser APIs:
+
+- `setRpcUrlPrefix(prefix)` — Sets `globalThis.rpc_url_prefix` for Kilua RPC WebSocket routing (needed in proxy mode for session-scoped paths).
+- `installConsoleCapture()` / `getConsoleLogs()` — Intercepts `console.log/warn/error`, buffers last 50 entries with timestamps and levels as JSON.
+- `getDomState()` — Collects DOM summary: message count, viewport size, permission dialog visibility, page title, body classes, URL.
+- `isMessagesAtBottom()` / `scrollMessagesToBottom()` / `installScrollListener()` / `readScrollAtBottom()` — Scroll position tracking and management for the messages container.
+- `downloadTextFile(filename, content)` — Triggers a client-side file download via Blob URL.
+- `pickFiles(multiple)` — Opens a native file picker dialog, returns a `Promise<FileList>`.
+
+External npm module: `html2canvas` imported via `@JsModule` for PNG screenshot capture.
+
+#### Message Protocol (Client Side)
+
+The client connects via `getService<IChatService>().chat { sendChannel, receiveChannel -> ... }`. On connect it sends `ResumeFrom(lastSeq)` if reconnecting. Incoming `WsMessage` types are dispatched in `onMessage()`:
+
+- `Connected` — Sets agent info, resets state on fresh connect (not delta resume).
+- `AgentText` / `AgentThought` — Delta chunks accumulated by `msgId`/`thoughtId` into `currentResponse`/`currentThought`. History replays (ids starting with `history-`) replace rather than append.
+- `ToolCall` — Upserts into `currentToolCalls` list by `toolCallId`.
+- `TurnComplete` — Flushes in-progress accumulators into `messages` list, stops timer.
+- `PermissionRequest` / `PermissionResponse` — Shows/hides permission dialog.
+- `AvailableAgents` — Populates agent selector; auto-shows if no agent selected.
+- `AvailableCommands` — Updates slash command autocomplete list.
+- `BrowserStateRequest` — Collects browser state and sends `BrowserStateResponse` back (for debug mode `browser://` reads).
+- `UserMessage` — Adds user message to history (from server replay).
+- `Error` — Adds error message to conversation.
+
+#### File Attachment Handling
+
+Files can be attached via three input methods:
+- **File picker** — `pickFiles()` JS bridge opens native dialog, returns `FileList`.
+- **Drag and drop** — `setDropTarget` on textarea intercepts drop events.
+- **Paste** — `ClipboardEvent` handler on textarea extracts pasted files.
+
+All paths read files via `readFile()` which converts to base64 using `kotlin.io.encoding.Base64`. Files are sent as `FileAttachment` objects in the `Prompt` message. The server handles routing: images as `ContentBlock.Image`, text files inlined into the prompt, binary files as `ContentBlock.Resource`.
+
+#### Chat Log Download
+
+The Download Log button (debug mode) serializes the full conversation to a markdown file:
+- User messages with file names
+- Assistant responses with usage stats
+- Thought blocks with usage stats
+- Tool call blocks with status icons and content
+- In-progress turn appended after a separator
+
+Downloaded as `chat-log.md` via the `downloadTextFile` JS bridge.
+
 ### Browser Debugging (Debug Mode)
 
 - `browser://console` — Last 50 console log entries (log/warn/error with timestamps)
@@ -125,7 +212,7 @@ Both local and proxy modes support automatic reconnection with no user action re
 
 - Kotlin ACP Client (https://github.com/agentclientprotocol/kotlin-sdk)
 - Ktor 3.x Server (CIO engine)
-- Kotlin JVM 21 runtime
+- Kotlin JVM 25 runtime
 - Kilua (Compose Runtime-based Kotlin/Wasm framework for client UI)
 - Kilua RPC (typed WebSocket channels between server and client)
 - kotlinx.html (server-side page templates only, in Pages.kt)
@@ -141,7 +228,7 @@ Both local and proxy modes support automatic reconnection with no user action re
 ## Distribution
 
 - GitHub Actions for automated releases (tag-triggered)
-- Docker container on ghcr.io (multi-arch: amd64, arm64, base image: eclipse-temurin:21-jre)
+- Docker container on ghcr.io (base image: eclipse-temurin:25-jre + Node.js + uv)
 - CLI binaries for macOS (arm64), Linux (amd64), Windows (amd64) via jpackage + shell/bat wrappers
 
 ### Running via Docker
@@ -167,10 +254,10 @@ docker run -it --rm \
 - `-p 8080:8080` — Exposes the gateway on `http://localhost:8080`.
 - `--agent <agent-id>` — Specifies which registry agent to use.
 - `--proxy` — Starts in proxy mode for use with the acp2web CLI.
-- The container must include the agent runtime (e.g. Node.js for npx-based agents, Python for uvx-based agents). The current base image (eclipse-temurin:21-jre) does not include these — extending the image or bundling runtimes is needed.
+- The container includes Node.js (for npx-based agents) and uv (for uvx-based agents) via a custom base image built from `server/base-image/Dockerfile`.
 - Add `--debug` for debug mode.
 
-**[NOT YET IMPLEMENTED]** Custom agent command via `--agent-command`:
+Custom agent command via `--agent-command`:
 
 ```bash
 docker run -it --rm \
@@ -188,22 +275,34 @@ The CLI (`cli/` module) runs the ACP agent locally and connects to a remote ACP 
 - The CLI creates a UUID session ID and connects to the remote gateway at `/s/{sessionId}/agent`
 - The gateway URL is printed to the console for the user to open in their browser
 - The CLI spawns the ACP agent subprocess locally and relays messages between the agent and the remote gateway
-- The CLI supports `--agent <id>` and `--gateway <url>` (defaults to `https://www.acp2web.com`)
+- The CLI supports `--agent <id>`, `--agent-command <command>` (mutually exclusive), and `--gateway <url>` (defaults to `https://www.acp2web.com`)
 - If `--agent` is not specified, the user selects their agent in the browser UI; the CLI receives a `ChangeAgent` message and starts the chosen agent
 - Agent switching mid-session is supported via `ChangeAgent` messages
 - The CLI uses Clikt for argument parsing and Ktor WebSocket client for the relay connection
 - Built as a JVM application, distributed as jpackage binaries with shell/bat wrapper scripts
 
 **[NOT YET IMPLEMENTED]**:
-- `--agent-command <command>` flag for custom agents outside the registry
 - Exponential backoff reconnect on relay WebSocket disconnect
 - Sequence-based delta catch-up on relay reconnect
 
 ## Future
 
-- `--agent-command` support for custom agents not in the registry (server + CLI)
 - CLI relay reconnect with exponential backoff and sequence-based catch-up
 - Global config file for default agent selection
 - Persistent session storage (beyond in-memory)
 - Code syntax highlighting in rendered blocks
 - Audio recording support (MediaRecorder API)
+- Additional functionality
+  - Skills Directory with SkillsJars
+  - MCP servers
+- Additonal ACP
+  - file references
+- Autopilot
+  - /autopilot prompt
+  - Have the agent use it's own UI to improve itself, finding more improvements along the way
+- Build isolation
+  - Running `./gradlew compileKotlin` while the server is running causes `NoClassDefFoundError` because the `run` task's classpath points directly to `build/classes/` directories, which get overwritten by compilation
+  - Option A: Use `./gradlew :server:runShadow` (already available via Ktor plugin, zero changes, but slower startup due to fat jar build)
+  - Option B: Add a custom `runJar` task that depends on the `jar` task and runs from the built jar + dependency jars instead of loose class files (fast, isolated from recompilation)
+- <tool_use_error>Cancelled: parallel tool call WebFetch errored</tool_use_error>
+- The file diff renderer is or was on the server side. we need to move it to the client side.

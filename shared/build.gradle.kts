@@ -16,7 +16,7 @@ extensions.configure<dev.kilua.rpc.gradle.KiluaRpcExtension> {
 
 @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
     jvm()
     wasmJs {
         browser()

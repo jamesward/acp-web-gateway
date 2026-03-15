@@ -71,6 +71,10 @@ class AgentHolder(
     val currentAgentId: String? get() = currentAgent?.id
     val currentAgentName: String? get() = currentAgent?.name
 
+    /** Error message from a failed agent start, cleared on successful switch. */
+    @Volatile
+    var startupError: String? = null
+
     suspend fun switchAgent(agentId: String) {
         lock.withLock {
             val oldManager = manager
@@ -87,10 +91,36 @@ class AgentHolder(
 
             manager = mgr
             currentAgent = agent
+            startupError = null
 
             // Close old manager after swapping (so WS connections fail and clients reconnect)
             oldManager?.close()
             logger.info("Agent switched to: {} ({})", agent.name, agent.version)
+        }
+    }
+
+    suspend fun switchAgentCommand(command: ProcessCommand) {
+        lock.withLock {
+            val oldManager = manager
+            val displayName = command.command.substringAfterLast('/')
+
+            logger.info("Switching to custom agent command: {}", command.command)
+            val mgr = AgentProcessManager(command, workingDir)
+            mgr.start()
+            if (mode == GatewayMode.LOCAL) {
+                mgr.createSession()
+            }
+
+            manager = mgr
+            currentAgent = RegistryAgent(
+                id = displayName,
+                name = displayName,
+                version = "custom",
+            )
+            startupError = null
+
+            oldManager?.close()
+            logger.info("Custom agent started: {}", displayName)
         }
     }
 
@@ -319,6 +349,7 @@ fun Application.module(
 
 data class ServerConfig(
     val agentId: String?,
+    val agentCommand: String?,
     val mode: GatewayMode,
     val port: Int,
     val debug: Boolean,
@@ -327,27 +358,44 @@ data class ServerConfig(
     val internalCommands: List<CommandInfo> = emptyList(),
 )
 
-fun parseServerConfig(args: Array<String>): ServerConfig = ServerConfig(
-    agentId = parseAgentId(args),
-    mode = parseMode(args),
-    port = parsePort(args),
-    debug = args.contains("--debug"),
-    dev = args.contains("--dev"),
-)
+fun parseServerConfig(args: Array<String>): ServerConfig {
+    val agentId = parseAgentId(args)
+    val agentCommand = parseAgentCommand(args)
+    require(agentId == null || agentCommand == null) {
+        "--agent and --agent-command are mutually exclusive"
+    }
+    return ServerConfig(
+        agentId = agentId,
+        agentCommand = agentCommand,
+        mode = parseMode(args),
+        port = parsePort(args),
+        debug = args.contains("--debug"),
+        dev = args.contains("--dev"),
+    )
+}
 
 /**
  * Starts the server with the given config. Returns the manager and server for lifecycle control.
  * Blocks the calling thread until the server is shut down.
  */
 fun startServer(config: ServerConfig) {
+    val agentDisplay = config.agentId ?: config.agentCommand ?: "<none>"
     logger.info("Starting ACP Web Gateway (agent={}, mode={}, port={}, debug={}, dev={})",
-        config.agentId ?: "<none>", config.mode, config.port, config.debug, config.dev)
+        agentDisplay, config.mode, config.port, config.debug, config.dev)
 
     val holder = runBlocking {
         val registry = fetchRegistry()
         val h = AgentHolder(registry, System.getProperty("user.dir"), config.mode)
-        if (config.agentId != null) {
-            h.switchAgent(config.agentId)
+        try {
+            if (config.agentCommand != null) {
+                h.switchAgentCommand(parseCommandString(config.agentCommand))
+            } else if (config.agentId != null) {
+                h.switchAgent(config.agentId)
+            }
+        } catch (e: Exception) {
+            val agentDisplay = config.agentId ?: config.agentCommand ?: "unknown"
+            logger.error("Failed to start agent '{}': {}", agentDisplay, e.message, e)
+            h.startupError = "Failed to start agent '$agentDisplay': ${e.message}"
         }
         h
     }
@@ -391,6 +439,12 @@ fun main(args: Array<String>) {
 
 private fun parseAgentId(args: Array<String>): String? {
     val idx = args.indexOf("--agent")
+    if (idx == -1 || idx + 1 >= args.size) return null
+    return args[idx + 1]
+}
+
+private fun parseAgentCommand(args: Array<String>): String? {
+    val idx = args.indexOf("--agent-command")
     if (idx == -1 || idx + 1 >= args.size) return null
     return args[idx + 1]
 }

@@ -93,6 +93,15 @@ fun resolveAgentCommand(agent: RegistryAgent): ProcessCommand {
     }
 }
 
+/**
+ * Parses a command string (e.g. "kiro-cli acp") into a ProcessCommand by splitting on whitespace.
+ */
+fun parseCommandString(commandString: String): ProcessCommand {
+    val parts = commandString.trim().split("\\s+".toRegex())
+    require(parts.isNotEmpty() && parts[0].isNotEmpty()) { "Agent command must not be empty" }
+    return ProcessCommand(command = parts[0], args = parts.drop(1))
+}
+
 private fun detectPlatformKey(): String {
     val os = System.getProperty("os.name").lowercase()
     val arch = System.getProperty("os.arch").lowercase()

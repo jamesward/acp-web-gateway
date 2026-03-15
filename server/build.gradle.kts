@@ -7,7 +7,7 @@ plugins {
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
 }
 
 application {
@@ -82,23 +82,43 @@ tasks.register<Test>("browserTest") {
 }
 
 val isProduction = gradle.startParameter.taskNames.any { "stage" in it || "installDist" in it || "jib" in it.lowercase() }
+// jib.from.image: set in CI to a registry-hosted multi-arch base image; omit for local builds (uses local Docker daemon)
+val customBaseImage = project.findProperty("jib.from.image")?.toString()
+val localBaseImageName = "acp-web-gateway-base"
+
+if (customBaseImage == null) {
+    val buildBaseImage = tasks.register<Exec>("buildBaseImage") {
+        description = "Builds the base Docker image with JRE, Node.js, and uv"
+        group = "jib"
+        workingDir = file("base-image")
+        commandLine("docker", "build", "-t", localBaseImageName, ".")
+        inputs.file("base-image/Dockerfile")
+        outputs.upToDateWhen { false }
+    }
+
+    tasks.named("jib") { dependsOn(buildBaseImage) }
+    tasks.named("jibDockerBuild") { dependsOn(buildBaseImage) }
+    tasks.named("jibBuildTar") { dependsOn(buildBaseImage) }
+}
 
 jib {
     from {
-        image = "eclipse-temurin:21-jre"
-        platforms {
-            platform {
-                architecture = "amd64"
-                os = "linux"
-            }
-            platform {
-                architecture = "arm64"
-                os = "linux"
+        image = customBaseImage ?: "docker://$localBaseImageName"
+        if (customBaseImage != null) {
+            platforms {
+                platform {
+                    architecture = "amd64"
+                    os = "linux"
+                }
+                platform {
+                    architecture = "arm64"
+                    os = "linux"
+                }
             }
         }
     }
     to {
-        image = project.findProperty("jib.to.image")?.toString() ?: "ghcr.io/acp-web-gateway"
+        image = project.findProperty("jib.to.image")?.toString() ?: "acp-web-gateway"
         tags = (project.findProperty("jib.to.tags")?.toString()
             ?: "${project.version},latest").split(",").toSet()
     }
