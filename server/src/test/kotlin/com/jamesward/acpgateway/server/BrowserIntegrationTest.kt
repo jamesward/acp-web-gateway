@@ -396,17 +396,14 @@ class BrowserIntegrationTest {
         // File chip should be cleared after sending
         assertEquals(0, page.locator(".file-chip").count(), "File chips should be cleared after sending")
 
-        // Verify the fake session received the file as a ContentBlock.Resource
+        // Verify the fake session received the file inlined into the text block
         assertTrue(fakeSession.promptHistory.isNotEmpty(), "Should have received a prompt")
         val contentBlocks = fakeSession.promptHistory.last()
-        val resourceBlock = contentBlocks.filterIsInstance<ContentBlock.Resource>().firstOrNull()
-        assertNotNull(resourceBlock, "Prompt should contain a Resource content block for the uploaded file")
-
-        // Verify the file content is correct (base64-encoded)
-        val blob = resourceBlock.resource as EmbeddedResourceResource.BlobResourceContents
-        val decoded = java.util.Base64.getDecoder().decode(blob.blob)
-        val content = String(decoded)
-        assertEquals("hello from test file", content, "File content should match the uploaded file")
+        val textBlocks = contentBlocks.filterIsInstance<ContentBlock.Text>()
+        assertTrue(textBlocks.isNotEmpty(), "Prompt should contain a Text content block")
+        val textContent = textBlocks.last().text
+        assertTrue(textContent.contains("hello from test file"), "Text block should contain inlined file content")
+        assertTrue(textContent.contains("check this file"), "Text block should contain the prompt text")
 
         // Clean up
         Files.deleteIfExists(tmpFile)
@@ -434,11 +431,12 @@ class BrowserIntegrationTest {
         page.locator(".btn-send").waitFor()
         page.waitForTimeout(500.0)
 
-        // Verify the agent received the file
+        // Verify the agent received the file inlined into the text block
         assertTrue(fakeSession.promptHistory.isNotEmpty(), "Should have received a prompt")
         val contentBlocks = fakeSession.promptHistory.last()
-        val resourceBlock = contentBlocks.filterIsInstance<ContentBlock.Resource>().firstOrNull()
-        assertNotNull(resourceBlock, "File-only prompt should contain a Resource content block")
+        val textBlocks = contentBlocks.filterIsInstance<ContentBlock.Text>()
+        assertTrue(textBlocks.isNotEmpty(), "File-only prompt should contain a Text content block")
+        assertTrue(textBlocks.last().text.contains("file only content"), "Text block should contain inlined file content")
 
         Files.deleteIfExists(tmpFile)
     }
