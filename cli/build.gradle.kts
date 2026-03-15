@@ -29,7 +29,7 @@ tasks.named<JavaExec>("run") {
 runtime {
     additive = true
     modules = listOf("jdk.crypto.ec", "jdk.crypto.cryptoki")
-    options = listOf("--compress", "zip-6", "--no-header-files", "--no-man-pages")
+    options = listOf("--compress", "zip-6", "--no-header-files", "--no-man-pages", "--strip-java-debug-attributes")
 
     jpackage {
         imageName = "acp2web"
@@ -42,13 +42,73 @@ runtime {
     }
 }
 
+// Strip debug symbols from native libraries in the jpackage image.
+// JDK 25 jmods ship unstripped .so files (~273MB libjvm.so); stripping brings them to ~29MB.
+// Gracefully skips if `strip` is not available (e.g. nix dev environments).
+tasks.register("stripNativeLibs") {
+    description = "Strips debug symbols from native libraries in the jpackage image"
+    group = "distribution"
+    dependsOn("jpackageImage")
+
+    val jpackageDir = layout.buildDirectory.dir("jpackage")
+    inputs.dir(jpackageDir)
+    outputs.dir(jpackageDir)
+
+    doLast {
+        val jpDir = jpackageDir.get().asFile
+        val appDir = jpDir.listFiles()?.firstOrNull { it.name.startsWith("acp2web") }
+            ?: error("No jpackage output found in ${jpDir.absolutePath}")
+
+        // Find strip tool — check PATH, then common nix/system locations
+        val candidates = mutableListOf("strip", "llvm-strip")
+        // nix store: gcc-wrapper provides strip
+        File("/nix/store").takeIf { it.isDirectory }?.listFiles()
+            ?.filter { it.name.contains("gcc-wrapper") }
+            ?.mapNotNull { File(it, "bin/strip").takeIf(File::canExecute) }
+            ?.firstOrNull()?.let { candidates.add(0, it.absolutePath) }
+        val stripCmd = candidates.firstOrNull { cmd ->
+            try {
+                ProcessBuilder(cmd, "--version").start().waitFor() == 0
+            } catch (_: Exception) { false }
+        }
+
+        if (stripCmd == null) {
+            logger.warn("Neither 'strip' nor 'llvm-strip' found — skipping native library stripping. Executable will be larger.")
+            return@doLast
+        }
+
+        val extensions = setOf("so", "dylib")
+        var totalSaved = 0L
+        appDir.walkTopDown()
+            .filter { it.isFile && extensions.any { ext -> it.name.endsWith(".$ext") || it.name.contains(".$ext.") } }
+            .forEach { file ->
+                val before = file.length()
+                val result = ProcessBuilder(stripCmd, "--strip-debug", file.absolutePath)
+                    .redirectErrorStream(true)
+                    .start()
+                val output = result.inputStream.bufferedReader().readText()
+                val exitCode = result.waitFor()
+                if (exitCode == 0) {
+                    val saved = before - file.length()
+                    if (saved > 0) {
+                        totalSaved += saved
+                        logger.lifecycle("Stripped ${file.name}: ${before / 1024 / 1024}MB → ${file.length() / 1024 / 1024}MB")
+                    }
+                } else {
+                    logger.warn("Failed to strip ${file.name}: $output")
+                }
+            }
+        logger.lifecycle("Total saved by stripping: ${totalSaved / 1024 / 1024}MB")
+    }
+}
+
 // Creates a single self-extracting executable that bundles the entire jpackage app-image.
 // Extracts to ~/.local/share/acp2web/<version>/ on first run, skips if dir exists.
 // Handles both Linux (acp2web/bin/acp2web) and macOS (acp2web.app/Contents/MacOS/acp2web) layouts.
 tasks.register("packageExecutable") {
     description = "Creates a single self-extracting executable"
     group = "distribution"
-    dependsOn("jpackageImage")
+    dependsOn("stripNativeLibs")
 
     val jpackageDir = layout.buildDirectory.dir("jpackage")
     val outputFile = layout.buildDirectory.file("dist/acp2web")
@@ -117,7 +177,7 @@ tasks.register("packageExecutable") {
 tasks.register("packageExecutableWindows") {
     description = "Creates a single self-extracting .bat executable for Windows"
     group = "distribution"
-    dependsOn("jpackageImage")
+    dependsOn("stripNativeLibs")
 
     val appImageDir = layout.buildDirectory.dir("jpackage/acp2web")
     val outputFile = layout.buildDirectory.file("dist/acp2web.bat")
