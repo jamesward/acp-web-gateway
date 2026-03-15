@@ -13,6 +13,7 @@ https://agentclientprotocol.com/
 
 - Users start the ACP Web Gateway on their machine in the context of a project
 - When users launch the gateway, they specify which agent from the registry (https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json) to use via `--agent <id>` CLI flag
+- Alternatively, users can specify a custom agent command not in the registry via `--agent-command <command>` (e.g. `--agent-command "kiro-cli acp"`). The command string is split on whitespace into the executable and its arguments. Since this agent isn't from the registry, there is no metadata (icon, display name, description, version). The gateway uses the executable name as a fallback display name and shows a generic icon. The `--agent` and `--agent-command` flags are mutually exclusive.
 - Users can choose to run in **local mode** (single session, default) or **proxy mode** (multi-session, URLs include session UUID)
 - In proxy mode the ACP Web Gateway runs somewhere else and the user provides the base URL. Initialization creates a UUID for the session. The user can then interact with that session using the base URL / UUID
 - Users perform normal AI code assistant interactions via the web gateway:
@@ -75,6 +76,40 @@ Client (thin Wasm + kotlin-browser + idiomorph):
 4. User clicks allow/deny, client sends `PermissionResponse` back via WebSocket
 5. Server resolves `CompletableDeferred`, agent continues
 
+### Reconnect Handling (Proxy/Relay Mode)
+
+In proxy mode the system has two WebSocket connections: **CLI ↔ Server** and **Server ↔ Browser**. Either connection can drop (network interruption, server restart, laptop sleep, etc.). Both must reconnect cleanly without losing session state.
+
+#### Design Principles
+
+- **Session state lives in the CLI** — the CLI holds the agent process and all session state (history, tool calls, pending permissions). The server in proxy mode is stateless relay. This means reconnection is always safe: the CLI re-establishes its relay WebSocket and the server picks up where it left off.
+- **Sequence-based catch-up** — each outbound message has a monotonic sequence number. On reconnect, the client sends its last-seen sequence number. The server (or CLI, for the relay link) replays any messages after that sequence from its turn buffer, avoiding duplicate or missed messages.
+- **No user action required** — reconnection is automatic with exponential backoff. The UI shows a transient "Reconnecting..." indicator but requires no user intervention.
+
+#### CLI ↔ Server (Relay WebSocket)
+
+1. **CLI connects** to `wss://<gateway>/s/{sessionId}/ws/relay` with the session UUID it generated at startup.
+2. **On disconnect**, the CLI retries with exponential backoff (1s, 2s, 4s, ... capped at 30s). The agent subprocess continues running — prompts in progress keep executing.
+3. **On reconnect**, the CLI sends a `Reconnect` message with `lastSeq` (the last sequence number it forwarded to the server). The server knows this is a resumption, not a new session.
+4. **Server replays** any buffered messages from browser clients that arrived after `lastSeq` (e.g. a `PermissionResponse` the user clicked while the CLI was disconnected).
+5. **CLI replays** any agent messages produced while disconnected (buffered in the turn buffer) back to the server for forwarding to connected browsers.
+6. **If the server restarts**, the CLI detects the broken connection and reconnects. Since the server is stateless in proxy mode, no server-side state is lost — the CLI re-registers its session.
+
+#### Server ↔ Browser (Kilua RPC / WebSocket)
+
+1. **Browser connects** via Kilua RPC WebSocket to `/s/{sessionId}/ws`.
+2. **On disconnect**, the browser retries with exponential backoff (1s, 2s, 4s, ... capped at 30s). The UI shows a "Reconnecting..." overlay.
+3. **On reconnect**, the browser sends a `Reconnect` message with `lastSeq`. The server replays messages from the turn buffer since that sequence number.
+4. **Pending permission dialogs** are re-sent on reconnect — the server tracks `activePermission` per session and includes it in the reconnect replay.
+5. **If the agent is mid-turn**, the reconnecting browser receives the current accumulated state (streamed text so far, active tool calls) so the UI catches up to the current position.
+6. **Multiple browsers** can connect to the same session. Each tracks its own `lastSeq`. Disconnection of one browser doesn't affect others.
+
+#### Message Ordering Guarantees
+
+- Messages within a single turn are strictly ordered by sequence number.
+- On reconnect, the turn buffer provides exactly-once delivery for messages within the current turn. Completed turns are in the chat history and replayed from the session store, not the turn buffer.
+- If `lastSeq` is older than the turn buffer's earliest entry (e.g. very long disconnection spanning multiple turns), the server falls back to sending full history from the session store followed by the current turn buffer.
+
 ### Browser Debugging (Debug Mode)
 
 - `browser://console` — Last 50 console log entries (log/warn/error with timestamps)
@@ -108,6 +143,34 @@ Client (thin Wasm + kotlin-browser + idiomorph):
 - Binaries via Kotlin Native for Linux, Mac, Windows
 - Jar on Maven Central
 
+### Running via Docker
+
+The published container `ghcr.io/jamesward/acp-web-gateway` can run locally with a project directory mounted read/write. The agent inside the container operates on the mounted directory as its working directory.
+
+```bash
+docker run -it --rm \
+  -p 8080:8080 \
+  -v "$(pwd):/project" \
+  ghcr.io/jamesward/acp-web-gateway \
+  --agent <agent-id>
+```
+
+- `-v "$(pwd):/project"` — Mounts the current directory into `/project` read/write. The server uses `/project` as the agent's working directory.
+- `-p 8080:8080` — Exposes the gateway on `http://localhost:8080`.
+- `--agent <agent-id>` — Specifies which registry agent to use. Can also use `--agent-command "command args"` for custom agents (the command must be available inside the container).
+- The container must include the agent runtime (e.g. Node.js for npx-based agents, Python for uvx-based agents). The base image should bundle common runtimes or users can extend the image.
+- Add `--debug` for debug mode (Diagnose button, `browser://` reads).
+
+Example with a custom agent command:
+
+```bash
+docker run -it --rm \
+  -p 8080:8080 \
+  -v "$(pwd):/project" \
+  ghcr.io/jamesward/acp-web-gateway \
+  --agent-command "kiro-cli acp"
+```
+
 ## acp2web CLI
 
 Key Architecture: The CLI is similar to the web gateway server, it runs the agent, holds the state, but does not serve UI. The web gateway in this `proxy` mode is just a web server passthrough and web UI server which enables remote access to the agent. In this mode there are two websocket connections: acp2web <-> remote web gateway <-> user
@@ -117,8 +180,10 @@ Key Architecture: The CLI is similar to the web gateway server, it runs the agen
 - The `acp2web` CLI will create a websocket connection to the remote gateway, which will in-turn proxy that to through to the user's browser
 - Like the web gateway server, in local mode the CLI will create the agent session (potentially not until the user selects one in the web UI, if one wasn't specified)
 - The `acp2web` program will remain running until the user ctrl-c exits it or terminates it some other way
-- The command will have optional parameters for `--agent` and `--gateway`
-- If `--agent` is not specified, the user will select their agent when they open the web gateway
+- The command will have optional parameters for `--agent`, `--agent-command`, and `--gateway`
+- `--agent-command` allows specifying a custom command not in the registry (e.g. `--agent-command "kiro-cli acp"`), same behavior as the server flag — no registry metadata available, executable name used as fallback display name
+- `--agent` and `--agent-command` are mutually exclusive
+- If neither `--agent` nor `--agent-command` is specified, the user will select their agent when they open the web gateway
 - If `--gateway` is not specified, a default will be used (`http://localhost:8080` for now)
 - The ACP Web Gateway must be running in proxy mode
 - The `acp2web` program will create a UUID session id and use that to connect to the remote gateway
@@ -263,4 +328,3 @@ Start with a spike branch:
 - Global config file for default agent selection
 - Persistent session storage (beyond in-memory)
 - Code syntax highlighting in rendered blocks
-- Multi-agent support (switch agents within a session)

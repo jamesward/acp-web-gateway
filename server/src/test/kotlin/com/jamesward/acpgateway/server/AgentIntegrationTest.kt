@@ -31,6 +31,15 @@ class AgentIntegrationTest {
         private var skipReason: String? = null
 
         private fun initAgent(): AgentEnv? {
+            // Skip if the agent requires auth credentials that aren't available.
+            // For claude-acp, ANTHROPIC_API_KEY must be set.
+            // Custom agents specified via -Dtest.acp.agent may have their own auth,
+            // so we only gate on the default agent or known agents that need a key.
+            if (agentId == "claude-acp" && System.getenv("ANTHROPIC_API_KEY").isNullOrBlank()) {
+                skipReason = "ANTHROPIC_API_KEY not set (required for $agentId)"
+                return null
+            }
+
             // Check npx
             val npxAvailable = try {
                 ProcessBuilder("npx", "--version")
@@ -204,6 +213,11 @@ class AgentIntegrationTest {
     @Test
     fun reloadShutdownCompletesWithinTenSeconds() {
         // Standalone agent — not shared with other tests.
+        if (agentId == "claude-acp" && System.getenv("ANTHROPIC_API_KEY").isNullOrBlank()) {
+            System.err.println("SKIP: ANTHROPIC_API_KEY not set (required for $agentId)")
+            return
+        }
+
         val npxAvailable = try {
             ProcessBuilder("npx", "--version")
                 .redirectErrorStream(true)
