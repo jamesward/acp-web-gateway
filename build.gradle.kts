@@ -9,7 +9,7 @@ plugins {
     id("dev.kilua") version "0.0.32" apply false
     id("com.google.devtools.ksp") version "2.3.6" apply false
     id("dev.kilua.rpc") version "0.0.42" apply false
-    id("org.beryx.runtime") version "2.0.1" apply false
+    id("org.graalvm.buildtools.native") version "0.10.6" apply false
     id("com.google.cloud.tools.jib") version "3.5.3" apply false
     id("com.palantir.git-version") version "5.0.0"
 }

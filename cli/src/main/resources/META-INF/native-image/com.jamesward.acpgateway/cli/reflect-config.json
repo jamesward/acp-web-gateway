@@ -1,0 +1,81 @@
+[
+  {
+    "name": "io.ktor.network.selector.InterestSuspensionsMap",
+    "fields": [
+      { "name": "readHandlerReference", "allowUnsafeAccess": true },
+      { "name": "writeHandlerReference", "allowUnsafeAccess": true },
+      { "name": "connectHandlerReference", "allowUnsafeAccess": true },
+      { "name": "acceptHandlerReference", "allowUnsafeAccess": true }
+    ]
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.RegistryResponse",
+    "allDeclaredFields": true,
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.RegistryResponse$Companion",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.RegistryAgent",
+    "allDeclaredFields": true,
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.RegistryAgent$Companion",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.Distribution",
+    "allDeclaredFields": true,
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.Distribution$Companion",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.NpxDistribution",
+    "allDeclaredFields": true,
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.NpxDistribution$Companion",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.UvxDistribution",
+    "allDeclaredFields": true,
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.UvxDistribution$Companion",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.BinaryPlatform",
+    "allDeclaredFields": true,
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "com.jamesward.acpgateway.shared.BinaryPlatform$Companion",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "ch.qos.logback.core.status.NopStatusListener",
+    "allDeclaredConstructors": true
+  }
+]

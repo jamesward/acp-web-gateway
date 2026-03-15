@@ -223,13 +223,14 @@ Downloaded as `chat-log.md` via the `downloadTextFile` JS bridge.
 - Playwright (E2E browser tests via Testcontainers in Docker)
 - Gradle build with kts definitions
 - Clikt (CLI argument parsing for acp2web)
+- GraalVM Native Image (CLI native binary compilation)
 - Jib (OCI container image building, no Dockerfile)
 
 ## Distribution
 
 - GitHub Actions for automated releases (tag-triggered)
 - Docker container on ghcr.io (base image: eclipse-temurin:25-jre + Node.js + uv)
-- CLI binaries for macOS (arm64), Linux (amd64), Windows (amd64) via jpackage + shell/bat wrappers
+- CLI binaries for macOS (arm64), Linux (amd64), Windows (amd64) as GraalVM native images (~58MB, no JVM required)
 
 ### Running via Docker
 
@@ -279,7 +280,9 @@ The CLI (`cli/` module) runs the ACP agent locally and connects to a remote ACP 
 - If `--agent` is not specified, the user selects their agent in the browser UI; the CLI receives a `ChangeAgent` message and starts the chosen agent
 - Agent switching mid-session is supported via `ChangeAgent` messages
 - The CLI uses Clikt for argument parsing and Ktor WebSocket client for the relay connection
-- Built as a JVM application, distributed as jpackage binaries with shell/bat wrapper scripts
+- Built as a GraalVM native image — single static binary per platform, no JVM required, instant startup
+- Native image reachability metadata for Ktor CIO, Logback, and kotlinx-serialization in `cli/src/main/resources/META-INF/native-image/`
+- The `org.graalvm.buildtools.native` Gradle plugin provides the `nativeCompile` task
 
 **[NOT YET IMPLEMENTED]**:
 - Exponential backoff reconnect on relay WebSocket disconnect

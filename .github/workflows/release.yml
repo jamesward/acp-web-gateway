@@ -28,45 +28,53 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
+      - uses: graalvm/setup-graalvm@v1
         with:
-          distribution: temurin
-          java-version: 25
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: gradle
       - uses: gradle/actions/setup-gradle@v5
 
-      - name: Build CLI (Unix)
+      - name: Build native CLI (Unix)
         if: runner.os != 'Windows'
-        run: ./gradlew :cli:packageExecutable
+        run: ./gradlew :cli:nativeCompile
+
+      - name: Compress CLI with UPX (Unix)
+        if: runner.os != 'Windows'
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          version: latest
+          files: cli/build/native/nativeCompile/acp2web
+          args: --best
 
       - name: Rename CLI artifact (Unix)
         if: runner.os != 'Windows'
-        run: mv cli/build/dist/acp2web cli/build/dist/acp2web-${{ matrix.name }}
+        run: mv cli/build/native/nativeCompile/acp2web cli/build/native/nativeCompile/acp2web-${{ matrix.name }}
 
       - name: Upload CLI artifact (Unix)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.name }}
-          path: cli/build/dist/acp2web-${{ matrix.name }}
+          path: cli/build/native/nativeCompile/acp2web-${{ matrix.name }}
 
-      - name: Build CLI (Windows)
+      - name: Build native CLI (Windows)
         if: runner.os == 'Windows'
-        run: ./gradlew :cli:jpackageImage
+        run: ./gradlew :cli:nativeCompile
 
       - name: Package CLI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path cli/build/dist
-          Compress-Archive -Path cli/build/jpackage/acp2web -DestinationPath cli/build/dist/acp2web-${{ matrix.name }}.zip
+          Compress-Archive -Path cli/build/native/nativeCompile/acp2web.exe -DestinationPath cli/build/native/nativeCompile/acp2web-${{ matrix.name }}.zip
 
       - name: Upload CLI artifact (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.name }}
-          path: cli/build/dist/acp2web-${{ matrix.name }}.zip
+          path: cli/build/native/nativeCompile/acp2web-${{ matrix.name }}.zip
 
   build-and-push-server:
     needs: build-cli

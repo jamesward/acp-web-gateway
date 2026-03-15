@@ -54,6 +54,9 @@ This project can be used to work on itself. In which case, running build tasks c
 # Defaults to claude-acp. Use -Dtest.acp.agent=github-copilot-cli to avoid claude-in-claude restriction.
 ./gradlew :server:integrationTest -Dtest.acp.agent=github-copilot-cli
 
+# Build CLI native image (requires GraalVM)
+./gradlew :cli:nativeCompile
+
 # Compile checks only (fast)
 ./gradlew compileKotlinJvm :shared:compileKotlinWasmJs :web:compileKotlinWasmJs :server:compileKotlin
 ```
