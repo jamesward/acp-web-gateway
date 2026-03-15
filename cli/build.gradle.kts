@@ -18,7 +18,7 @@ dependencies {
     implementation(project(":shared"))
     implementation("io.ktor:ktor-client-cio:$ktorVersion")
     implementation("io.ktor:ktor-client-websockets:$ktorVersion")
-    implementation("com.github.ajalt.clikt:clikt:5.0.3")
+    implementation("com.github.ajalt.clikt:clikt:5.1.0")
     implementation("ch.qos.logback:logback-classic:1.5.32")
 }
 
