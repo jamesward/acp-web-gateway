@@ -11,7 +11,7 @@ plugins {
     id("dev.kilua.rpc") version "0.0.42" apply false
     id("org.beryx.runtime") version "2.0.1" apply false
     id("com.google.cloud.tools.jib") version "3.5.3" apply false
-    id("com.palantir.git-version") version "4.3.0"
+    id("com.palantir.git-version") version "5.0.0"
 }
 
 val gitVersion: groovy.lang.Closure<String> by extra
