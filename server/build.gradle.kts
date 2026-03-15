@@ -105,7 +105,7 @@ jib {
     container {
         mainClass = "com.jamesward.acpgateway.server.ServerKt"
         ports = listOf("8080")
-        args = listOf("--proxy")
+        args = emptyList()
     }
 }
 
