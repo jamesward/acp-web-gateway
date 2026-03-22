@@ -306,3 +306,4 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
 - <tool_use_error>Cancelled: parallel tool call WebFetch errored</tool_use_error>
 - The file diff renderer is or was on the server side. we need to move it to the client side.
 - Kotlin/Native for CLI once Kotlin ACP has native targets
+- API versioning so client & server stay in sync (let the user know when they run the CLI if the server is mismatched)
