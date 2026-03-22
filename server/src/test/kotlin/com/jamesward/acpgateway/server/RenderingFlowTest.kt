@@ -1,3 +1,5 @@
+@file:OptIn(com.agentclientprotocol.annotations.UnstableApi::class)
+
 package com.jamesward.acpgateway.server
 
 import com.agentclientprotocol.common.Event
@@ -864,7 +866,7 @@ class RenderingFlowTest {
 
         val connected2 = output2.receive()
         assertIs<WsMessage.Connected>(connected2)
-        assertTrue((connected2 as WsMessage.Connected).agentWorking, "Should show agent is working")
+        assertTrue(connected2.agentWorking, "Should show agent is working")
 
         // Should receive only chunk3 (delta since chunk2)
         val resumedMsgs = mutableListOf<WsMessage>()

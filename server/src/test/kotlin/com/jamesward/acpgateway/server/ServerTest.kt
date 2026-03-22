@@ -375,6 +375,7 @@ class ServerTest {
                 if (frame is Frame.Text) sentFrames.add(frame.readText())
             }
             override suspend fun flush() {}
+            @Deprecated("", level = DeprecationLevel.ERROR)
             override fun terminate() {}
         }
         relay.backendWs = fakeBackendWs
@@ -422,6 +423,7 @@ class ServerTest {
                 if (frame is Frame.Text) sentFrames.add(frame.readText())
             }
             override suspend fun flush() {}
+            @Deprecated("", level = DeprecationLevel.ERROR)
             override fun terminate() {}
         }
         relay.backendWs = fakeBackendWs

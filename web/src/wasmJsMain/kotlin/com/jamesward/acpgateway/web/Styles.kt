@@ -8,25 +8,32 @@ import dev.kilua.html.style.PElement
 import dev.kilua.html.style.globalStyle
 import kotlin.time.Duration.Companion.milliseconds
 
-// ---- Theme Constants ----
+// ---- Theme Colors (CSS custom properties set by installTheme() in App.kt) ----
 
-private val bgBody = Color("#0d1117")
-private val bgHeader = Color("#161b22")
-private val bgCard = Color("#161b22")
-private val bgCardHover = Color("#1c2128")
-private val bgInput = Color("#0d1117")
-private val bgUserMsg = Color("#1f6feb")
-private val bgOverlay = Color("rgba(0, 0, 0, 0.6)")
-private val borderSubtle = Color("#30363d")
-private val textPrimary = Color("#e6edf3")
-private val textSecondary = Color("#8b949e")
-private val textMuted = Color("#6e7681")
-private val textOnBlue = Color("#ffffff")
-private val accentBlue = Color("#1f6feb")
-private val accentRed = Color("#da3633")
-private val accentYellow = Color("#d29922")
-private val accentGreen = Color("#3fb950")
-private val accentRedHover = Color("#f85149")
+private fun v(name: String) = Color("var($name)")
+
+private val bgBody = v("--bg-body")
+private val bgHeader = v("--bg-header")
+private val bgCard = v("--bg-card")
+private val bgCardHover = v("--bg-card-hover")
+private val bgInput = v("--bg-input")
+private val bgUserMsg = v("--bg-user-msg")
+private val bgOverlay = v("--bg-overlay")
+private val borderSubtle = v("--border-subtle")
+private val textPrimary = v("--text-primary")
+private val textSecondary = v("--text-secondary")
+private val textMuted = v("--text-muted")
+private val textOnBlue = v("--text-on-blue")
+private val accentBlue = v("--accent-blue")
+private val accentRed = v("--accent-red")
+private val accentYellow = v("--accent-yellow")
+private val accentGreen = v("--accent-green")
+private val accentRedHover = v("--accent-red-hover")
+private val codeBg = v("--code-bg")
+private val fileTagBg = v("--file-tag-bg")
+private val fileTagColor = v("--file-tag-color")
+private val shadowColor = v("--shadow-color")
+private val errorBg = v("--error-bg")
 private val radius = 8.px
 private val radiusLg = 12.px
 private const val FONT_SANS =
@@ -101,7 +108,7 @@ private fun IComponent.headerStyles() {
         height = 24.px
         borderRadius = radius
         setStyle("object-fit", "contain")
-        setStyle("filter", "brightness(0) invert(1)")
+        setStyle("filter", "var(--icon-filter)")
     }
     globalStyle(selector = "header .header-title") {
         setStyle("font-weight", "700")
@@ -134,7 +141,11 @@ private fun IComponent.headerStyles() {
     globalStyle(selector = "header button:hover") {
         background = Background(color = bgCardHover)
         color = textPrimary
-        setStyle("border-color", textSecondary.value)
+        setStyle("border-color", "var(--text-secondary)")
+    }
+    globalStyle(selector = "header .btn-theme") {
+        setStyle("margin-left", "auto")
+        fontSize = 14.px
     }
 }
 
@@ -207,7 +218,7 @@ private fun IComponent.agentSelectorStyles() {
         height = 32.px
         borderRadius = radius
         setStyle("object-fit", "contain")
-        setStyle("filter", "brightness(0) invert(1)")
+        setStyle("filter", "var(--icon-filter)")
         flexShrink = 0
     }
     globalStyle(selector = ".agent-selector-icon-placeholder") {
@@ -276,7 +287,7 @@ private fun IComponent.agentSelectorStyles() {
         width = 24.px
         height = 24.px
         border = Border(3.px, BorderStyle.Solid, borderSubtle)
-        setStyle("border-top-color", textPrimary.toString())
+        setStyle("border-top-color", "var(--text-primary)")
         borderRadius = 50.perc
         setStyle("animation", "spin 0.8s linear infinite")
     }
@@ -349,11 +360,11 @@ private fun IComponent.messageBubbleStyles() {
     globalStyle(selector = ".msg-file-tag") {
         display = Display.InlineFlex
         alignItems = AlignItems.Center
-        background = Background(color = Color("rgba(255, 255, 255, 0.15)"))
+        background = Background(color = fileTagBg)
         borderRadius = 4.px
         setStyle("padding", "2px 8px")
         fontSize = 12.px
-        color = Color("rgba(255, 255, 255, 0.9)")
+        color = fileTagColor
     }
 
     // Assistant messages
@@ -563,7 +574,7 @@ private fun IComponent.toolStyles() {
 private fun IComponent.errorStyles() {
     globalStyle(selector = ".msg-error") {
         alignSelf = AlignItems.FlexStart
-        background = Background(color = Color("rgba(218, 54, 51, 0.1)"))
+        background = Background(color = errorBg)
         border = Border(1.px, BorderStyle.Solid, accentRed)
         borderRadius = radiusLg
         setStyle("padding", "10px 16px")
@@ -610,11 +621,11 @@ private fun IComponent.scrollButtonStyles() {
             Transition("background", 150.milliseconds),
             Transition("border-color", 150.milliseconds),
         )
-        boxShadow = BoxShadow(0.px, 2.px, 8.px, color = Color("rgba(0, 0, 0, 0.3)"))
+        boxShadow = BoxShadow(0.px, 2.px, 8.px, color = shadowColor)
     }
     globalStyle(selector = ".scroll-btn:hover") {
         background = Background(color = bgCardHover)
-        setStyle("border-color", textSecondary.value)
+        setStyle("border-color", "var(--text-secondary)")
     }
 }
 
@@ -715,7 +726,7 @@ private fun IComponent.inputBarStyles() {
         transition = Transition("border-color", 150.milliseconds)
     }
     globalStyle(selector = ".input-row textarea:focus") {
-        setStyle("border-color", accentBlue.value)
+        setStyle("border-color", "var(--accent-blue)")
     }
     globalStyle(selector = ".input-row textarea::placeholder") {
         color = textMuted
@@ -766,7 +777,7 @@ private fun IComponent.buttonStyles() {
     globalStyle(selector = ".btn-attach:hover") {
         background = Background(color = bgCardHover)
         color = textPrimary
-        setStyle("border-color", textSecondary.value)
+        setStyle("border-color", "var(--text-secondary)")
     }
     globalStyle(selector = ".btn-send") {
         setStyle("padding", "6px 20px")
@@ -819,7 +830,7 @@ private fun IComponent.buttonStyles() {
         cursor = Cursor.Pointer
     }
     globalStyle(selector = ".screenshot-label input[type=\"checkbox\"]") {
-        setStyle("accent-color", accentBlue.value)
+        setStyle("accent-color", "var(--accent-blue)")
     }
 }
 
@@ -878,7 +889,7 @@ private fun IComponent.permissionDialogStyles() {
     }
     globalStyle(selector = ".permission-dialog button:first-child") {
         background = Background(color = accentGreen)
-        setStyle("border-color", accentGreen.value)
+        setStyle("border-color", "var(--accent-green)")
         color = Color("#000000")
         setStyle("font-weight", "600")
     }
@@ -917,7 +928,7 @@ private fun IComponent.markdownStyles() {
         marginBottom = 4.px
     }
     globalStyle(selector = ".msg-body code") {
-        background = Background(color = Color("rgba(110, 118, 129, 0.2)"))
+        background = Background(color = codeBg)
         setStyle("padding", "2px 6px")
         borderRadius = 4.px
         fontFamily = FONT_MONO

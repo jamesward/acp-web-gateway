@@ -1,6 +1,7 @@
+@file:OptIn(com.agentclientprotocol.annotations.UnstableApi::class)
+
 package com.jamesward.acpgateway.server
 
-import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.client.Client
 import com.agentclientprotocol.client.ClientSession
 import com.agentclientprotocol.common.ClientSessionOperations
@@ -74,19 +75,12 @@ open class ControllableFakeClientSession : ClientSession {
     override val currentMode: StateFlow<SessionModeId> = MutableStateFlow(SessionModeId("default"))
     override suspend fun setMode(modeId: SessionModeId, _meta: JsonElement?) = SetSessionModeResponse()
 
-    @OptIn(UnstableApi::class)
     override val modelsSupported = false
-    @OptIn(UnstableApi::class)
     override val availableModels: List<ModelInfo> = emptyList()
-    @OptIn(UnstableApi::class)
     override val currentModel: StateFlow<ModelId> = MutableStateFlow(ModelId("default"))
-    @OptIn(UnstableApi::class)
     override suspend fun setModel(modelId: ModelId, _meta: JsonElement?) = SetSessionModelResponse()
 
-    @OptIn(UnstableApi::class)
     override val configOptionsSupported = false
-    @OptIn(UnstableApi::class)
     override val configOptions: StateFlow<List<SessionConfigOption>> = MutableStateFlow(emptyList())
-    @OptIn(UnstableApi::class)
     override suspend fun setConfigOption(configId: SessionConfigId, value: SessionConfigOptionValue, _meta: JsonElement?) = SetSessionConfigOptionResponse(emptyList())
 }

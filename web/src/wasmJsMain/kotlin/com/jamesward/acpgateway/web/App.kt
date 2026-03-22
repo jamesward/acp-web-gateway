@@ -122,6 +122,41 @@ private external fun installScrollListener()
 @JsFun("() => { return globalThis.__messagesAtBottom !== false; }")
 private external fun readScrollAtBottom(): Boolean
 
+// ---- Theme management (JS bridges) ----
+
+/** Inject theme CSS custom properties and apply saved preference from localStorage. */
+@JsFun("() => {" +
+    "if(document.getElementById('theme-vars'))return;" +
+    "var s=document.createElement('style');s.id='theme-vars';" +
+    "var d='--bg-body:#0d1117;--bg-header:#161b22;--bg-card:#161b22;--bg-card-hover:#1c2128;--bg-input:#0d1117;--bg-user-msg:#1f6feb;--bg-overlay:rgba(0,0,0,0.6);--border-subtle:#30363d;--text-primary:#e6edf3;--text-secondary:#8b949e;--text-muted:#6e7681;--text-on-blue:#fff;--accent-blue:#1f6feb;--accent-red:#da3633;--accent-yellow:#d29922;--accent-green:#3fb950;--accent-red-hover:#f85149;--code-bg:rgba(110,118,129,0.2);--file-tag-bg:rgba(255,255,255,0.15);--file-tag-color:rgba(255,255,255,0.9);--shadow-color:rgba(0,0,0,0.3);--icon-filter:brightness(0) invert(1);--error-bg:rgba(218,54,51,0.1);color-scheme:dark;';" +
+    "var l='--bg-body:#ffffff;--bg-header:#f6f8fa;--bg-card:#f6f8fa;--bg-card-hover:#eaeef2;--bg-input:#ffffff;--bg-user-msg:#1f6feb;--bg-overlay:rgba(0,0,0,0.4);--border-subtle:#d0d7de;--text-primary:#1f2328;--text-secondary:#656d76;--text-muted:#8c959f;--text-on-blue:#fff;--accent-blue:#1f6feb;--accent-red:#cf222e;--accent-yellow:#bf8700;--accent-green:#1a7f37;--accent-red-hover:#a40e26;--code-bg:rgba(175,184,193,0.2);--file-tag-bg:rgba(0,0,0,0.08);--file-tag-color:rgba(0,0,0,0.7);--shadow-color:rgba(0,0,0,0.1);--icon-filter:none;--error-bg:rgba(207,34,46,0.1);color-scheme:light;';" +
+    "s.textContent=':root{'+d+'}@media(prefers-color-scheme:light){:root:not([data-theme=dark]){'+l+'}}[data-theme=light]{'+l+'}[data-theme=dark]{'+d+'}';" +
+    "document.head.insertBefore(s,document.head.firstChild);" +
+    "try{var v=localStorage.getItem('acp-theme');if(v)document.documentElement.setAttribute('data-theme',v);}catch(e){}" +
+    "}")
+private external fun installTheme()
+
+/** Get current theme preference: "auto", "light", or "dark". */
+@JsFun("() => { try{return localStorage.getItem('acp-theme')||'auto';}catch(e){return 'auto';} }")
+private external fun getThemePreference(): String
+
+/** Cycle theme: auto -> opposite-of-system -> same-as-system -> auto. Returns new preference. */
+@JsFun("""(current) => {
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const opposite = systemDark ? 'light' : 'dark';
+    const same = systemDark ? 'dark' : 'light';
+    const next = current === 'auto' ? opposite : current === opposite ? same : 'auto';
+    if (next === 'auto') {
+        try{localStorage.removeItem('acp-theme');}catch(e){}
+        document.documentElement.removeAttribute('data-theme');
+    } else {
+        try{localStorage.setItem('acp-theme', next);}catch(e){}
+        document.documentElement.setAttribute('data-theme', next);
+    }
+    return next;
+}""")
+private external fun cycleTheme(current: String): String
+
 /** Opens a file picker dialog and returns the selected FileList via a Promise. */
 @JsFun("""(multiple) => new Promise(function(resolve) {
     var input = document.createElement('input');
@@ -183,6 +218,9 @@ sealed class ChatMessage {
 class App : Application() {
 
     private val scope = CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
+
+    // Theme state
+    private var themePreference by mutableStateOf(getThemePreference())
 
     // Connection state
     private var wsSendChannel: SendChannel<WsMessage>? = null
@@ -251,6 +289,7 @@ class App : Application() {
     }
 
     override fun start() {
+        installTheme()
         installConsoleCapture()
         val body = document.body
         debugMode = body.hasAttribute("data-debug")
@@ -486,6 +525,23 @@ class App : Application() {
                         doReload()
                     }
                 }
+            }
+
+            // Theme toggle — pushed to far right via margin-left:auto
+            val themeIcon = when (themePreference) {
+                "light" -> "\u2600\uFE0F" // sun
+                "dark" -> "\uD83C\uDF19" // crescent moon
+                else -> "\uD83D\uDCBB" // computer (auto/system)
+            }
+            val themeLabel = when (themePreference) {
+                "light" -> "Light mode"
+                "dark" -> "Dark mode"
+                else -> "System theme"
+            }
+            button(themeIcon) {
+                className("btn-theme")
+                title(themeLabel)
+                onClick { themePreference = cycleTheme(themePreference) }
             }
         }
 

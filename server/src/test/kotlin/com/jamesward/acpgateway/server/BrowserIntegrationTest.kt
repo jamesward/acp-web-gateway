@@ -1,3 +1,5 @@
+@file:OptIn(com.agentclientprotocol.annotations.UnstableApi::class)
+
 package com.jamesward.acpgateway.server
 
 import com.agentclientprotocol.common.Event

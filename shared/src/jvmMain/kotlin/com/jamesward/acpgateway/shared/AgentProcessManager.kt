@@ -1,3 +1,5 @@
+@file:OptIn(com.agentclientprotocol.annotations.UnstableApi::class)
+
 package com.jamesward.acpgateway.shared
 
 import com.agentclientprotocol.client.Client
