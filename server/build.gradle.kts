@@ -82,38 +82,18 @@ tasks.register<Test>("browserTest") {
 }
 
 val isProduction = gradle.startParameter.taskNames.any { "stage" in it || "installDist" in it || "jib" in it.lowercase() }
-// jib.from.image: set in CI to a registry-hosted multi-arch base image; omit for local builds (uses local Docker daemon)
-val customBaseImage = project.findProperty("jib.from.image")?.toString()
-val localBaseImageName = "acp-web-gateway-base"
-
-if (customBaseImage == null) {
-    val buildBaseImage = tasks.register<Exec>("buildBaseImage") {
-        description = "Builds the base Docker image with JRE, Node.js, and uv"
-        group = "jib"
-        workingDir = file("base-image")
-        commandLine("docker", "build", "-t", localBaseImageName, ".")
-        inputs.file("base-image/Dockerfile")
-        outputs.upToDateWhen { false }
-    }
-
-    tasks.named("jib") { dependsOn(buildBaseImage) }
-    tasks.named("jibDockerBuild") { dependsOn(buildBaseImage) }
-    tasks.named("jibBuildTar") { dependsOn(buildBaseImage) }
-}
 
 jib {
     from {
-        image = customBaseImage ?: "docker://$localBaseImageName"
-        if (customBaseImage != null) {
-            platforms {
-                platform {
-                    architecture = "amd64"
-                    os = "linux"
-                }
-                platform {
-                    architecture = "arm64"
-                    os = "linux"
-                }
+        image = "eclipse-temurin:25-jre"
+        platforms {
+            platform {
+                architecture = "amd64"
+                os = "linux"
+            }
+            platform {
+                architecture = "arm64"
+                os = "linux"
             }
         }
     }
@@ -192,8 +172,16 @@ tasks.register<JavaExec>("runAutoPilot") {
     workingDir = rootProject.projectDir
 }
 
+tasks.register<JavaExec>("runDev") {
+    description = "Runs the dev server with in-process agent (test classpath)"
+    group = "application"
+    mainClass = "com.jamesward.acpgateway.server.DevServerKt"
+    classpath = sourceSets["test"].runtimeClasspath
+    workingDir = rootProject.projectDir
+}
+
 tasks.register<DevRunTask>("devRun") {
-    description = "Runs the server in a restart loop for development. /autopilot command is always available."
+    description = "Runs the dev server in a restart loop for development. /autopilot command is always available."
     group = "application"
     gradlew = "${rootProject.projectDir}/gradlew"
     gradleTarget = ":server:runAutoPilot"

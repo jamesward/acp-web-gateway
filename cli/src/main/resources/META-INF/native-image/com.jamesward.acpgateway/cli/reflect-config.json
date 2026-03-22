@@ -77,5 +77,14 @@
   {
     "name": "ch.qos.logback.core.status.NopStatusListener",
     "allDeclaredConstructors": true
+  },
+  {
+    "name": "ch.qos.logback.classic.Logger",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "ch.qos.logback.classic.Level",
+    "allDeclaredFields": true
   }
 ]

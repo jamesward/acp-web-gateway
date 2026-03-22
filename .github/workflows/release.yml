@@ -101,18 +101,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push multi-arch base image
-        uses: docker/build-push-action@v6
-        with:
-          context: server/base-image
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ghcr.io/${{ github.repository }}-base:latest
-
       - name: Build and push multi-arch image
         run: |
           ./gradlew :server:jib \
-            -Pjib.from.image=ghcr.io/${{ github.repository }}-base:latest \
             -Djib.to.image=ghcr.io/${{ github.repository }} \
             -Djib.to.auth.username=${{ github.actor }} \
             -Djib.to.auth.password=${{ secrets.GITHUB_TOKEN }}

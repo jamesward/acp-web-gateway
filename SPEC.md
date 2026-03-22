@@ -14,8 +14,9 @@ https://agentclientprotocol.com/
 - Users start the ACP Web Gateway on their machine in the context of a project
 - When users launch the gateway, they specify which agent from the registry (https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json) to use via `--agent <id>` CLI flag
 - Alternatively, users can specify a custom agent command not in the registry via `--agent-command <command>` (e.g. `--agent-command "kiro-cli acp"`). The command string is split on whitespace into the executable and its arguments. Since this agent isn't from the registry, there is no metadata (icon, display name, description, version). The gateway uses the executable name as a fallback display name and shows a generic icon. The `--agent` and `--agent-command` flags are mutually exclusive.
-- Users can choose to run in **local mode** (single session, default) or **proxy mode** (multi-session, `--proxy` flag)
-- In proxy mode the ACP Web Gateway runs somewhere else and the user provides the base URL. Initialization creates a UUID for the session. The user can then interact with that session using the base URL / UUID
+- The server runs in **proxy mode** only (multi-session relay). For development, a **dev mode** server with in-process agent is available in test scope.
+- The CLI starts a local Docker container running the proxy server by default, or connects to a remote server with `--remote`.
+- Sessions are created on demand via CLI connections. Each CLI instance creates a UUID session, connects to the server, and prints the session URL for the browser.
 - Users perform normal AI code assistant interactions via the web gateway:
   - Text prompts with Markdown rendering (headings, lists, code blocks, tables, links)
   - File attachments via file picker, drag-drop, or paste (images sent as PNG, text files inlined into prompt, binary files as resources)
@@ -35,7 +36,7 @@ https://agentclientprotocol.com/
 
 ## Architecture
 
-- The ACP Web Gateway spawns the ACP agent as a subprocess, communicates via stdio transport using the ACP Kotlin SDK
+- The ACP agent runs locally via the `acp2web` CLI, which spawns it as a subprocess and communicates via stdio transport using the ACP Kotlin SDK. The CLI relays messages to the proxy server over WebSocket.
 - The gateway contains the compiled Wasm artifacts for the browser client
 - **Client-side rendering**: the server sends structured JSON messages (`WsMessage` types) over Kilua RPC WebSocket channels. The Kotlin/Wasm client renders all UI using Kilua composables with reactive state management.
 
@@ -62,11 +63,11 @@ Client (Kotlin/WasmJS + Kilua composables):
 
 ### Session Modes
 
-- **Local mode** (default): Single session auto-created at startup. Root `/` serves chat page. Kilua RPC handles WebSocket.
-- **Proxy mode** (`--proxy`): Sessions created on demand via CLI connections. URLs are `/s/{sessionId}`. Three WebSocket routes:
+- **Proxy mode** (production): The server is relay-only. Sessions created on demand via CLI connections. Landing page at `/`. Session URLs are `/s/{sessionId}`. Three WebSocket routes per session:
   - `/s/{sessionId}/agent` — CLI backend relay WebSocket
   - `/s/{sessionId}/ws` — Browser raw WebSocket (relay)
   - `/s/{sessionId}` — Kilua RPC endpoint
+- **Dev mode** (test scope): Single session with in-process agent. Root `/` serves chat page. Kilua RPC at root level. Used for development via `./gradlew :server:runDev`.
 
 ### Rendering Pipeline
 
@@ -229,54 +230,52 @@ Downloaded as `chat-log.md` via the `downloadTextFile` JS bridge.
 ## Distribution
 
 - GitHub Actions for automated releases (tag-triggered)
-- Docker container on ghcr.io (base image: eclipse-temurin:25-jre + Node.js + uv)
+- Docker container on ghcr.io (base image: `eclipse-temurin:25-jre`, no Node.js/uv — agents run on the CLI side)
 - CLI binaries for macOS (arm64), Linux (amd64), Windows (amd64) as GraalVM native images (~58MB, no JVM required)
 
 ### Running via Docker
 
-The published container `ghcr.io/jamesward/acp-web-gateway` defaults to **local mode**. The user can pass `--proxy` to start in proxy/relay mode instead.
+The published container `ghcr.io/jamesward/acp-web-gateway` runs in proxy-only mode. The CLI starts it automatically via Docker by default.
 
 ```bash
-# Local mode (default) — mount project directory, specify agent
-docker run -it --rm \
+# Manual Docker start (proxy-only mode)
+docker run -d --rm \
   -p 8080:8080 \
-  -v "$(pwd):/project" \
-  ghcr.io/jamesward/acp-web-gateway \
-  --agent <agent-id>
-
-# Proxy mode — for use with acp2web CLI
-docker run -it --rm \
-  -p 8080:8080 \
-  ghcr.io/jamesward/acp-web-gateway \
-  --proxy
+  ghcr.io/jamesward/acp-web-gateway
 ```
 
-- `-v "$(pwd):/project"` — Mounts the current directory into `/project` read/write. The server uses `/project` as the agent's working directory.
 - `-p 8080:8080` — Exposes the gateway on `http://localhost:8080`.
-- `--agent <agent-id>` — Specifies which registry agent to use.
-- `--proxy` — Starts in proxy mode for use with the acp2web CLI.
-- The container includes Node.js (for npx-based agents) and uv (for uvx-based agents) via a custom base image built from `server/base-image/Dockerfile`.
 - Add `--debug` for debug mode.
-
-Custom agent command via `--agent-command`:
-
-```bash
-docker run -it --rm \
-  -p 8080:8080 \
-  -v "$(pwd):/project" \
-  ghcr.io/jamesward/acp-web-gateway \
-  --agent-command "kiro-cli acp"
-```
+- The container is a plain JRE image — agents run locally via the CLI, not inside the container.
 
 ## acp2web CLI
 
-The CLI (`cli/` module) runs the ACP agent locally and connects to a remote ACP Web Gateway server running in proxy mode. The gateway serves as a web UI passthrough. In this mode there are two WebSocket connections: acp2web ↔ remote web gateway ↔ user's browser.
+The CLI (`cli/` module) runs the ACP agent locally and connects to a gateway server. By default, it starts a local Docker container running the proxy server. The `--remote` flag connects to a remote server instead.
+
+### Default mode (Docker)
+
+1. CLI checks `~/.acp2web/server.json` for an existing Docker container
+2. If a running container is found (health check passes), reuses it
+3. Otherwise, starts `docker run -d --rm -p <random-port>:8080 ghcr.io/jamesward/acp-web-gateway`
+4. Creates a UUID session ID and connects to `ws://localhost:<port>/s/{sessionId}/agent`
+5. Prints the browser URL for the user to open
+6. Spawns the ACP agent locally and relays messages
+
+On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are active, it stops the Docker container and removes the state file.
+
+### Remote mode (`--remote`)
+
+- `acp2web --agent foo` → Docker mode (default)
+- `acp2web --remote --agent foo` → connect to `https://www.acp2web.com`
+- `acp2web --remote https://my-server.com --agent foo` → connect to specified URL
+
+### Common behavior
 
 - Users start `acp2web` in their project directory
-- The CLI creates a UUID session ID and connects to the remote gateway at `/s/{sessionId}/agent`
+- The CLI creates a UUID session ID and connects to the gateway at `/s/{sessionId}/agent`
 - The gateway URL is printed to the console for the user to open in their browser
-- The CLI spawns the ACP agent subprocess locally and relays messages between the agent and the remote gateway
-- The CLI supports `--agent <id>`, `--agent-command <command>` (mutually exclusive), and `--gateway <url>` (defaults to `https://www.acp2web.com`)
+- The CLI spawns the ACP agent subprocess locally and relays messages between the agent and the gateway
+- The CLI supports `--agent <id>` and `--agent-command <command>` (mutually exclusive)
 - If `--agent` is not specified, the user selects their agent in the browser UI; the CLI receives a `ChangeAgent` message and starts the chosen agent
 - Agent switching mid-session is supported via `ChangeAgent` messages
 - The CLI uses Clikt for argument parsing and Ktor WebSocket client for the relay connection
@@ -292,7 +291,6 @@ The CLI (`cli/` module) runs the ACP agent locally and connects to a remote ACP 
 
 - CLI relay reconnect with exponential backoff and sequence-based catch-up
 - Global config file for default agent selection
-- Persistent session storage (beyond in-memory)
 - Code syntax highlighting in rendered blocks
 - Audio recording support (MediaRecorder API)
 - Additional functionality
@@ -309,3 +307,5 @@ The CLI (`cli/` module) runs the ACP agent locally and connects to a remote ACP 
   - Option B: Add a custom `runJar` task that depends on the `jar` task and runs from the built jar + dependency jars instead of loose class files (fast, isolated from recompilation)
 - <tool_use_error>Cancelled: parallel tool call WebFetch errored</tool_use_error>
 - The file diff renderer is or was on the server side. we need to move it to the client side.
+- Kotlin/Native for CLI once Kotlin ACP has native targets
+- Add light mode (OS sync'd if possible) and web UI switcher

@@ -15,83 +15,49 @@ private val relayJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 private val logger = LoggerFactory.getLogger("ChatServiceImpl")
 
 class ChatServiceImpl(
-    private val holder: AgentHolder,
-    private val mode: GatewayMode,
+    private val registry: List<RegistryAgent>,
     private val debug: Boolean,
-    private val commandHandler: CommandHandler?,
-    private val internalCommands: List<CommandInfo>,
     private val sessionId: UUID?,
     private val relayLookup: ((UUID) -> RelaySession?)? = null,
 ) : IChatService {
     override suspend fun chat(input: ReceiveChannel<WsMessage>, output: SendChannel<WsMessage>) {
-        // In proxy mode, check if a relay session exists (CLI backend connected)
-        if (mode == GatewayMode.PROXY && sessionId != null) {
-            val relay = relayLookup?.invoke(sessionId)
-            if (relay != null) {
-                bridgeRelay(relay, input, output)
-                return
-            }
+        if (sessionId == null) {
+            output.send(WsMessage.Error("No session ID"))
+            return
         }
 
-        while (true) {
-            val manager = holder.manager
-            if (manager == null) {
-                // Send startup error if the agent failed to start
-                val err = holder.startupError
-                if (err != null) {
-                    output.send(WsMessage.Connected("Agent failed to start", "", agentWorking = false))
-                    output.send(WsMessage.Error(err))
-                    holder.startupError = null
+        val relay = relayLookup?.invoke(sessionId)
+        if (relay != null) {
+            bridgeRelay(relay, input, output)
+            return
+        }
+
+        // No relay session yet — send waiting state and available agents
+        output.send(WsMessage.Connected("Waiting for CLI connection", "", agentWorking = false))
+        if (registry.isNotEmpty()) {
+            output.send(WsMessage.AvailableAgents(
+                agents = registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
+                currentAgentId = null,
+            ))
+            output.send(WsMessage.AvailableCommands(emptyList()))
+        }
+
+        // Wait for a ChangeAgent (browser-side selection) or just consume until close
+        for (msg in input) {
+            if (msg is WsMessage.ChangeAgent) {
+                // Forward the change agent to relay if it appeared while we were waiting
+                val newRelay = relayLookup?.invoke(sessionId)
+                if (newRelay != null) {
+                    val backend = newRelay.backendWs
+                    if (backend != null) {
+                        try {
+                            val text = relayJson.encodeToString(WsMessage.serializer(), msg)
+                            backend.send(Frame.Text(text))
+                        } catch (_: Exception) {}
+                    }
+                    bridgeRelay(newRelay, input, output)
+                    return
                 }
-                // No agent selected — wait for a ChangeAgent message
-                if (err == null) {
-                    output.send(WsMessage.Connected("No agent selected", "", agentWorking = false))
-                }
-                if (holder.registry.isNotEmpty()) {
-                    output.send(WsMessage.AvailableAgents(
-                        agents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
-                        currentAgentId = null,
-                    ))
-                    output.send(WsMessage.AvailableCommands(emptyList()))
-                }
-                val agentId = waitForChangeAgent(input)
-                    ?: return // Client disconnected
-                try {
-                    holder.switchAgent(agentId)
-                } catch (e: Exception) {
-                    logger.error("Failed to start agent '{}'", agentId, e)
-                    output.send(WsMessage.Error("Failed to start agent '$agentId': ${e.message}"))
-                    // Loop continues — user can select a different agent
-                }
-                continue
-            }
-            val session = if (mode == GatewayMode.LOCAL) {
-                manager.sessions.values.firstOrNull()
-            } else {
-                sessionId?.let { manager.getSession(it) }
-            }
-            if (session == null) {
-                output.send(WsMessage.Error("No session available"))
-                return
-            }
-            try {
-                handleChatChannels(
-                    input, output, session, manager,
-                    debug = debug,
-                    commandHandler = commandHandler,
-                    internalCommands = internalCommands,
-                    availableAgents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
-                    currentAgentId = holder.currentAgentId,
-                )
-                return // Normal exit (client disconnected)
-            } catch (e: AgentSwitchException) {
-                try {
-                    holder.switchAgent(e.agentId)
-                } catch (startErr: Exception) {
-                    logger.error("Failed to switch to agent '{}'", e.agentId, startErr)
-                    output.send(WsMessage.Error("Failed to start agent '${e.agentId}': ${startErr.message}"))
-                }
-                // Loop continues — new manager/session will be resolved at top of loop
             }
         }
     }
@@ -131,7 +97,7 @@ class ChatServiceImpl(
             // synthesize one so the browser isn't left with a blank screen.
             if (!hasConnected) {
                 val agentName = if (relay.agentId != null) {
-                    holder.registry.find { it.id == relay.agentId }?.name ?: relay.agentId!!
+                    registry.find { it.id == relay.agentId }?.name ?: relay.agentId!!
                 } else {
                     "No agent selected"
                 }
@@ -140,9 +106,9 @@ class ChatServiceImpl(
 
             // The CLI doesn't send AvailableAgents (it has no registry).
             // Always send it from the server so the browser has agent info and icon.
-            if (!hasAvailableAgents && holder.registry.isNotEmpty()) {
+            if (!hasAvailableAgents && registry.isNotEmpty()) {
                 output.send(WsMessage.AvailableAgents(
-                    agents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
+                    agents = registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
                     currentAgentId = relay.agentId,
                 ))
                 output.send(WsMessage.AvailableCommands(emptyList()))
@@ -157,9 +123,9 @@ class ChatServiceImpl(
                             output.send(msg)
                             // The CLI doesn't send AvailableAgents — supplement after
                             // each Connected so the browser has agent info and icon.
-                            if (msg is WsMessage.Connected && holder.registry.isNotEmpty()) {
+                            if (msg is WsMessage.Connected && registry.isNotEmpty()) {
                                 output.send(WsMessage.AvailableAgents(
-                                    agents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
+                                    agents = registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
                                     currentAgentId = relay.agentId,
                                 ))
                             }
@@ -195,14 +161,5 @@ class ChatServiceImpl(
             relay.rpcChannels.remove(relayChannel)
             relayChannel.close()
         }
-    }
-
-    /** Reads from [input] until a [WsMessage.ChangeAgent] arrives. Returns the agentId, or null if channel closed. */
-    private suspend fun waitForChangeAgent(input: ReceiveChannel<WsMessage>): String? {
-        for (msg in input) {
-            if (msg is WsMessage.ChangeAgent) return msg.agentId
-            // Ignore other messages while waiting for agent selection
-        }
-        return null
     }
 }

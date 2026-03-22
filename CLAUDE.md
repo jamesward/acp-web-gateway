@@ -8,7 +8,7 @@ Three Gradle modules (Kotlin 2.3, JVM 25):
 
 ```
 shared/   — Kotlin Multiplatform (JVM + WasmJS). Message types, WebSocket handler, ACP SDK integration. Kilua RPC service interface.
-server/   — Ktor 3.x (CIO) web server. Spawns the ACP agent process, manages sessions, serves HTML pages + Kilua RPC WebSocket.
+server/   — Ktor 3.x (CIO) web server. Proxy-only relay mode. Manages relay sessions, serves HTML pages + Kilua RPC WebSocket.
 web/      — Kotlin/WasmJS Kilua composable UI. Pure Compose-style components, Kilua RPC for typed WebSocket communication.
 ```
 
@@ -20,10 +20,8 @@ web/      — Kotlin/WasmJS Kilua composable UI. Pure Compose-style components, 
 - `WebSocketHandler.kt` — Core `handleChatChannels(input, output, session, manager, ...)` function processing ACP events into WsMessages. Thin `handleChatWebSocket()` wrapper for CLI/simulation use.
 
 ### server
-- `Server.kt` — Ktor application setup, routing, `main()`. CLI args: `--agent <id>`, `--mode local|proxy`, `--debug`. Kilua RPC routes for browser WS, raw WS for relay. Runs on port 8080.
-- `ChatServiceImpl.kt` — Kilua RPC implementation of `IChatService`, delegates to `handleChatChannels`.
-- `AgentProcessManager.kt` — Spawns the ACP agent subprocess via stdio transport. Manages `GatewaySession` instances (prompt mutex, history, tool call tracking).
-- `GatewayClientOperations.kt` — Implements `ClientSessionOperations` (ACP SDK). Handles file I/O, terminal operations, and permission request flow via `CompletableDeferred`.
+- `Server.kt` — Ktor application setup, routing, `main()`. Proxy-only mode. CLI args: `--port`, `--debug`, `--dev`. Relay WebSocket routes, Kilua RPC routes, `GET /api/sessions/count` for CLI reference counting. Runs on port 8080.
+- `ChatServiceImpl.kt` — Kilua RPC implementation of `IChatService`. Relay-only: bridges RPC channels to relay sessions. Sends "Waiting for CLI connection" when no relay session exists.
 - `Pages.kt` — Server-side HTML page templates using kotlinx.html (`chatPage`, `landingPage`). Minimal shell with `<div id="root">` mount point.
 - `Registry.kt` — Fetches ACP agent registry, resolves agent distribution (npx/uvx/binary) to a `ProcessCommand`.
 
@@ -38,10 +36,13 @@ This project can be used to work on itself. In which case, running build tasks c
 # Compile everything (server + wasm)
 ./gradlew build
 
-# Run server (compiles wasm, copies to server resources automatically)
-./gradlew :server:run --args="--agent claude-code --debug"
+# Run server in proxy-only mode (no agent — relay only)
+./gradlew :server:run
 
-# Run server in dev mode (for triggerable reloads)
+# Run dev server with in-process agent (test classpath)
+./gradlew :server:runDev --args="--agent claude-code --debug"
+
+# Run dev server in restart loop (for triggerable reloads)
 ./gradlew :server:devRun -Pargs="--agent github-copilot-cli --debug"
 
 # Run unit tests (fast, no agent needed)
@@ -67,9 +68,9 @@ The server's `processResources` task automatically runs `:web:wasmJsBrowserDevel
 
 ## Architecture Notes
 
-- **Local mode**: Single session auto-created at startup. Root `/` serves chat page, `/ws` is WebSocket.
-- **Proxy mode**: Sessions created on demand. URLs are `/s/{sessionId}` and `/s/{sessionId}/ws`.
-- **ACP communication**: Server spawns agent as subprocess, communicates via stdio using the ACP Kotlin SDK's `StdioTransport` → `Protocol` → `Client` → `ClientSession`.
+- **Proxy mode** (production): Server is relay-only. Landing page at `/`. Sessions created on demand via CLI connections at `/s/{sessionId}`. No in-process agent.
+- **Dev mode** (test scope, `DevServer.kt`): In-process agent. Chat page at `/`. `AgentHolder` class manages agent lifecycle. Used via `./gradlew :server:runDev`.
+- **ACP communication**: CLI spawns agent as subprocess, communicates via stdio using the ACP Kotlin SDK's `StdioTransport` → `Protocol` → `Client` → `ClientSession`. CLI relays messages to the proxy server over WebSocket.
 - **Browser communication**: Browser connects via Kilua RPC (typed WebSocket channels). Server sends structured `WsMessage` types (AgentText, AgentThought, ToolCall, etc.). Client renders UI using Kilua composables with reactive state.
 - **Permissions**: Agent requests permissions via `ClientSessionOperations.requestPermissions()` which suspends on a `CompletableDeferred`. Server sends `PermissionRequest` message. Client renders permission dialog as a Kilua composable and sends `PermissionResponse` back via RPC channel.
 - **Debug mode**: `--debug` flag sets `data-debug="true"` on `<body>`, enables Screenshot checkbox, Download Log button, and Diagnose button.

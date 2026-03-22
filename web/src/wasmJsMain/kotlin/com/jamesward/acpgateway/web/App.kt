@@ -463,16 +463,19 @@ class App : Application() {
                 img(src = agentIcon, alt = agentName) { className("header-icon") }
             }
             span(className = "header-title") { +(agentName.ifEmpty { "ACP Gateway" }) }
-            val cwdVal = cwd
-            if (cwdVal != null) {
-                span(className = "header-info") { +" \u00b7 $cwdVal" }
-            }
+
             if (availableAgents.size > 1) {
                 button("\u21C4") {
                     title("Switch agent")
                     onClick { showAgentSelector = !showAgentSelector }
                 }
             }
+
+            val cwdVal = cwd
+            if (cwdVal != null) {
+                span(className = "header-info") { +cwdVal }
+            }
+
             if (devMode) {
                 button(if (reloading) "Reloading\u2026" else "\u21BB") {
                     title("Reload server")

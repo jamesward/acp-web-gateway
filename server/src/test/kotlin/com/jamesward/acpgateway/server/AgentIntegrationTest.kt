@@ -278,10 +278,10 @@ class AgentIntegrationTest {
         val shutdownComplete = java.util.concurrent.CountDownLatch(1)
         lateinit var server: io.ktor.server.engine.EmbeddedServer<io.ktor.server.cio.CIOApplicationEngine, io.ktor.server.cio.CIOApplicationEngine.Configuration>
         server = io.ktor.server.engine.embeddedServer(io.ktor.server.cio.CIO, port = port) {
-            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
+            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"))
             holder.manager = manager
             holder.currentAgent = RegistryAgent(id = "test-agent", name = "test-agent", version = "1.0.0")
-            module(holder, GatewayMode.LOCAL, debug = true, dev = true, onReload = {
+            devModule(holder, debug = true, dev = true, onReload = {
                 manager.close()
                 server.stop(100, 500)
                 shutdownComplete.countDown()

@@ -26,8 +26,8 @@ import kotlin.test.assertTrue
 
 class ServerTest {
 
-    private fun testApp(
-        mode: GatewayMode = GatewayMode.LOCAL,
+    /** Helper for tests that need a dev-mode (local) server with a fake agent. */
+    private fun testDevApp(
         block: suspend ApplicationTestBuilder.(sessionId: UUID, fakeSession: FakeClientSession, session: GatewaySession, manager: AgentProcessManager) -> Unit,
     ) = testApplication {
         val command = ProcessCommand("echo", listOf("test"))
@@ -48,33 +48,43 @@ class ServerTest {
         session.ready = true
         session.startEventForwarding()
         manager.sessions[session.id] = session
-        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), mode)
+        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"))
         holder.manager = manager
         holder.currentAgent = RegistryAgent(id = "test-agent", name = "test-agent", version = "1.0.0")
         application {
-            module(holder, mode)
+            devModule(holder)
         }
         block(session.id, fakeClientSession, session, manager)
     }
 
+    /** Helper for tests that need a proxy-mode server. */
+    private fun testProxyApp(
+        block: suspend ApplicationTestBuilder.() -> Unit,
+    ) = testApplication {
+        application {
+            module(emptyList())
+        }
+        block()
+    }
+
     @Test
-    fun healthEndpoint() = testApp { _, _, _, _ ->
+    fun healthEndpoint() = testDevApp { _, _, _, _ ->
         val response = client.get("/health")
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("ok", response.bodyAsText())
     }
 
     @Test
-    fun rootServesChatInLocalMode() = testApp(GatewayMode.LOCAL) { sessionId, _, _, _ ->
+    fun rootServesChatInDevMode() = testDevApp { sessionId, _, _, _ ->
         val response = client.get("/")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("ACP Gateway"))
-        assertTrue(!body.contains(sessionId.toString()), "Local mode should not expose session UUID")
+        assertTrue(!body.contains(sessionId.toString()), "Dev mode should not expose session UUID")
     }
 
     @Test
-    fun rootShowsLandingInProxyMode() = testApp(GatewayMode.PROXY) { _, _, _, _ ->
+    fun rootShowsLandingInProxyMode() = testProxyApp {
         val response = client.get("/")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
@@ -83,7 +93,9 @@ class ServerTest {
     }
 
     @Test
-    fun sessionPageReturnsHtml() = testApp(GatewayMode.PROXY) { sessionId, _, _, _ ->
+    fun sessionPageReturnsHtml() = testProxyApp {
+        // In proxy-only mode, session page renders even without relay session
+        val sessionId = UUID.randomUUID()
         val response = client.get("/s/$sessionId")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
@@ -92,7 +104,8 @@ class ServerTest {
     }
 
     @Test
-    fun sessionPageIncludesWasmScript() = testApp(GatewayMode.PROXY) { sessionId, _, _, _ ->
+    fun sessionPageIncludesWasmScript() = testProxyApp {
+        val sessionId = UUID.randomUUID()
         val response = client.get("/s/$sessionId")
         val body = response.bodyAsText()
         assertTrue(body.contains("""src="/static/web.js""""))
@@ -100,7 +113,7 @@ class ServerTest {
 
 
     @Test
-    fun localModeChannelSendsConnectedMessage() = testApp(GatewayMode.LOCAL) { _, _, session, manager ->
+    fun devModeChannelSendsConnectedMessage() = testDevApp { _, _, session, manager ->
         val input = Channel<WsMessage>(Channel.UNLIMITED)
         val output = Channel<WsMessage>(Channel.UNLIMITED)
 
@@ -113,12 +126,6 @@ class ServerTest {
 
         input.close()
         handlerJob.cancel()
-    }
-
-    @Test
-    fun unknownSessionReturns404() = testApp(GatewayMode.PROXY) { _, _, _, _ ->
-        val response = client.get("/s/${UUID.randomUUID()}")
-        assertEquals(HttpStatusCode.NotFound, response.status)
     }
 
     // --- File attachment and screenshot tests ---
@@ -153,7 +160,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithImageFileSendsContentBlockImage() = testApp { _, fakeSession, session, manager ->
+    fun promptWithImageFileSendsContentBlockImage() = testDevApp { _, fakeSession, session, manager ->
         val prompt = WsMessage.Prompt(
             text = "what is this?",
             files = listOf(FileAttachment("photo.png", "image/png", "iVBORw0KGgo=")),
@@ -170,7 +177,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithScreenshotSendsContentBlockImage() = testApp { _, fakeSession, session, manager ->
+    fun promptWithScreenshotSendsContentBlockImage() = testDevApp { _, fakeSession, session, manager ->
         val prompt = WsMessage.Prompt(
             text = "describe this page",
             screenshot = "c2NyZWVuc2hvdA==",
@@ -183,7 +190,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithTextFileInlinesContentIntoTextBlock() = testApp { _, fakeSession, session, manager ->
+    fun promptWithTextFileInlinesContentIntoTextBlock() = testDevApp { _, fakeSession, session, manager ->
         val prompt = WsMessage.Prompt(
             text = "analyze this",
             files = listOf(FileAttachment("data.csv", "text/csv", "bmFtZSxhZ2U=")), // "name,age"
@@ -200,7 +207,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithTxtFileInlinesContent() = testApp { _, fakeSession, session, manager ->
+    fun promptWithTxtFileInlinesContent() = testDevApp { _, fakeSession, session, manager ->
         // "Hello world" in base64
         val base64Content = java.util.Base64.getEncoder().encodeToString("Hello world".toByteArray())
         val prompt = WsMessage.Prompt(
@@ -218,7 +225,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithBinaryNonImageFileSendsContentBlockResource() = testApp { _, fakeSession, session, manager ->
+    fun promptWithBinaryNonImageFileSendsContentBlockResource() = testDevApp { _, fakeSession, session, manager ->
         val prompt = WsMessage.Prompt(
             text = "analyze this",
             files = listOf(FileAttachment("report.pdf", "application/pdf", "cmVwb3J0")),
@@ -233,7 +240,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithScreenshotAndFilesSendsAllContentBlocks() = testApp { _, fakeSession, session, manager ->
+    fun promptWithScreenshotAndFilesSendsAllContentBlocks() = testDevApp { _, fakeSession, session, manager ->
         val prompt = WsMessage.Prompt(
             text = "compare these",
             screenshot = "c2NyZWVuc2hvdA==",
@@ -263,7 +270,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithMixedTextAndBinaryFiles() = testApp { _, fakeSession, session, manager ->
+    fun promptWithMixedTextAndBinaryFiles() = testDevApp { _, fakeSession, session, manager ->
         val csvBase64 = java.util.Base64.getEncoder().encodeToString("name,age".toByteArray())
         val prompt = WsMessage.Prompt(
             text = "analyze all",
@@ -286,7 +293,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithTextExtensionAndOctetStreamMimeTypeInlinesAsText() = testApp { _, fakeSession, session, manager ->
+    fun promptWithTextExtensionAndOctetStreamMimeTypeInlinesAsText() = testDevApp { _, fakeSession, session, manager ->
         // Browsers often report application/octet-stream for .md, .json, .yaml etc.
         val mdContent = java.util.Base64.getEncoder().encodeToString("# Hello\nWorld".toByteArray())
         val prompt = WsMessage.Prompt(
@@ -304,7 +311,7 @@ class ServerTest {
     }
 
     @Test
-    fun promptWithNoAttachmentsSendsTextOnly() = testApp { _, fakeSession, session, manager ->
+    fun promptWithNoAttachmentsSendsTextOnly() = testDevApp { _, fakeSession, session, manager ->
         val prompt = WsMessage.Prompt(text = "hello")
         val blocks = sendPromptAndGetContentBlocks(prompt, fakeSession, session, manager)
         assertEquals(1, blocks.size, "Should have only 1 content block")
@@ -318,25 +325,17 @@ class ServerTest {
 
     @Test
     fun proxyModeWithRelaySessionBridgesCachedMessages() = runTest {
-        // Scenario: CLI backend connected and sent messages (cached in relay).
-        // Browser connects via RPC. ChatServiceImpl should replay cached messages
-        // AND supplement with AvailableAgents (which the CLI doesn't send).
         val sessionId = UUID.randomUUID()
         val relay = RelaySession(sessionId)
         relay.agentId = "test-agent"
 
-        // Simulate CLI having sent Connected (CLI doesn't send AvailableAgents)
         val connectedMsg = WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)
         relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(), connectedMsg))
 
-        val holder = AgentHolder(
-            listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png")),
-            System.getProperty("user.dir"),
-            GatewayMode.PROXY,
-        )
+        val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png"))
 
         val impl = ChatServiceImpl(
-            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            registry, false, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -345,12 +344,10 @@ class ServerTest {
 
         val job = launch { impl.chat(input, output) }
 
-        // Should get cached Connected
         val msg = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.Connected>(msg)
         assertEquals("Test Agent", msg.agentName)
 
-        // Should get supplemented AvailableAgents with currentAgentId set
         val agents = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.AvailableAgents>(agents)
         assertEquals("test-agent", agents.currentAgentId)
@@ -362,13 +359,10 @@ class ServerTest {
 
     @Test
     fun proxyModeRelayForwardsInputToBackend() = runTest {
-        // Scenario: Browser sends a message via RPC. ChatServiceImpl should forward it
-        // to the relay's backend WebSocket (the CLI).
         val sessionId = UUID.randomUUID()
         val relay = RelaySession(sessionId)
         relay.agentId = "test-agent"
 
-        // Set up a fake backend WS that captures sent frames
         val sentFrames = mutableListOf<String>()
         val fakeBackendWs = object : WebSocketSession {
             override val incoming get() = throw NotImplementedError()
@@ -385,14 +379,11 @@ class ServerTest {
         }
         relay.backendWs = fakeBackendWs
 
-        // Pre-populate cache so chat() doesn't exit immediately
         val connectedMsg = WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)
         relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(), connectedMsg))
 
-        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.PROXY)
-
         val impl = ChatServiceImpl(
-            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            emptyList(), false, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -401,17 +392,13 @@ class ServerTest {
 
         val job = launch { impl.chat(input, output) }
 
-        // Consume the cached Connected
         withTimeout(5000) { output.receive() }
 
-        // Browser sends a prompt
         input.send(WsMessage.Prompt("hello from browser"))
 
-        // Close input to end the bridging loop
         input.close()
         job.join()
 
-        // The prompt should have been forwarded to the backend WS as JSON
         assertTrue(sentFrames.isNotEmpty(), "Should forward messages to relay backend")
         val forwarded = testJson.decodeFromString(WsMessage.serializer(), sentFrames.first())
         assertIs<WsMessage.Prompt>(forwarded)
@@ -420,8 +407,6 @@ class ServerTest {
 
     @Test
     fun proxyModeRelaySetsSwitchInProgressOnChangeAgent() = runTest {
-        // When the browser sends ChangeAgent via the relay bridge,
-        // switchInProgress should be set so the relay survives CLI disconnect/reconnect.
         val sessionId = UUID.randomUUID()
         val relay = RelaySession(sessionId)
 
@@ -441,14 +426,10 @@ class ServerTest {
         }
         relay.backendWs = fakeBackendWs
 
-        val holder = AgentHolder(
-            listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0")),
-            System.getProperty("user.dir"),
-            GatewayMode.PROXY,
-        )
+        val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0"))
 
         val impl = ChatServiceImpl(
-            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            registry, false, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -457,21 +438,17 @@ class ServerTest {
 
         val job = launch { impl.chat(input, output) }
 
-        // Consume the synthesized Connected
         withTimeout(5000) { output.receive() }
 
         assertFalse(relay.switchInProgress, "switchInProgress should start false")
 
-        // Browser selects an agent
         input.send(WsMessage.ChangeAgent("test-agent"))
 
-        // Give time for message to be processed
         input.close()
         job.join()
 
         assertTrue(relay.switchInProgress, "switchInProgress should be set after ChangeAgent")
 
-        // ChangeAgent should have been forwarded to CLI backend
         assertTrue(sentFrames.isNotEmpty(), "ChangeAgent should be forwarded to backend")
         val forwarded = testJson.decodeFromString(WsMessage.serializer(), sentFrames.last())
         assertIs<WsMessage.ChangeAgent>(forwarded)
@@ -480,20 +457,14 @@ class ServerTest {
 
     @Test
     fun proxyModeRelaySupplementsLiveConnectedWithAvailableAgents() = runTest {
-        // When the CLI sends a new Connected message (e.g., after agent switch),
-        // the bridge should inject AvailableAgents so the browser gets agent icon info.
         val sessionId = UUID.randomUUID()
         val relay = RelaySession(sessionId)
         relay.agentId = "test-agent"
 
-        val holder = AgentHolder(
-            listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png")),
-            System.getProperty("user.dir"),
-            GatewayMode.PROXY,
-        )
+        val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png"))
 
         val impl = ChatServiceImpl(
-            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            registry, false, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -502,21 +473,17 @@ class ServerTest {
 
         val job = launch { impl.chat(input, output) }
 
-        // Consume the synthesized initial Connected + AvailableAgents + AvailableCommands
         withTimeout(5000) { output.receive() } // Connected
         withTimeout(5000) { output.receive() } // AvailableAgents
         withTimeout(5000) { output.receive() } // AvailableCommands
 
-        // Simulate CLI sending a live Connected after agent switch
         relay.rpcChannels.first().trySend(
             WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)
         )
 
-        // Should get the Connected
         val connected = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.Connected>(connected)
 
-        // Should get supplemented AvailableAgents right after
         val agents = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.AvailableAgents>(agents)
         assertEquals("test-agent", agents.currentAgentId)
@@ -528,24 +495,16 @@ class ServerTest {
 
     @Test
     fun proxyModeRelayWithEmptyCacheSendsAgentSelector() = runTest {
-        // Scenario: CLI connected without --agent. No messages cached yet.
-        // Browser connects via RPC. Should see agent selector, not a blank screen.
         val sessionId = UUID.randomUUID()
         val relay = RelaySession(sessionId)
-        // relay.agentId is null — no agent selected yet
-        // relay.messageCache is empty
 
-        val holder = AgentHolder(
-            listOf(
-                RegistryAgent(id = "agent-a", name = "Agent A", version = "1.0"),
-                RegistryAgent(id = "agent-b", name = "Agent B", version = "2.0"),
-            ),
-            System.getProperty("user.dir"),
-            GatewayMode.PROXY,
+        val registry = listOf(
+            RegistryAgent(id = "agent-a", name = "Agent A", version = "1.0"),
+            RegistryAgent(id = "agent-b", name = "Agent B", version = "2.0"),
         )
 
         val impl = ChatServiceImpl(
-            holder, GatewayMode.PROXY, false, null, emptyList(), sessionId,
+            registry, false, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -554,17 +513,14 @@ class ServerTest {
 
         val job = launch { impl.chat(input, output) }
 
-        // Should synthesize a Connected message
         val connected = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.Connected>(connected)
         assertEquals("No agent selected", connected.agentName)
 
-        // Should send available agents
         val agents = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.AvailableAgents>(agents)
         assertEquals(2, agents.agents.size)
 
-        // Should send available commands
         val commands = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.AvailableCommands>(commands)
 
@@ -574,29 +530,26 @@ class ServerTest {
 
     @Test
     fun noAgentSelectedSendsConnectedAndWaits() = testApplication {
-        // Set up holder with no agent (manager = null)
-        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
+        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"))
 
         application {
-            module(holder, GatewayMode.LOCAL)
+            devModule(holder)
         }
 
         val input = Channel<WsMessage>(Channel.UNLIMITED)
         val output = Channel<WsMessage>(Channel.UNLIMITED)
 
-        val serviceImpl = ChatServiceImpl(holder, GatewayMode.LOCAL, false, null, emptyList(), null)
+        val serviceImpl = DevChatServiceImpl(holder, false, null, emptyList())
 
         val job = CoroutineScope(Dispatchers.Default).launch {
             serviceImpl.chat(input, output)
         }
 
         withTimeout(5000) {
-            // Should get a Connected message indicating no agent
             val msg = output.receive()
             assertIs<WsMessage.Connected>(msg)
             assertEquals("No agent selected", msg.agentName)
 
-            // Connection should stay open — closing input should end cleanly
             input.close()
         }
 

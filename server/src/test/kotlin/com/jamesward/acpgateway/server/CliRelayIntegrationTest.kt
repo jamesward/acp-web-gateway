@@ -31,9 +31,8 @@ class CliRelayIntegrationTest {
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
 
     private fun startProxyServer(port: Int): io.ktor.server.engine.EmbeddedServer<io.ktor.server.cio.CIOApplicationEngine, io.ktor.server.cio.CIOApplicationEngine.Configuration> {
-        val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.PROXY)
         val server = io.ktor.server.engine.embeddedServer(io.ktor.server.cio.CIO, port = port) {
-            module(holder, GatewayMode.PROXY)
+            module(emptyList())
         }
         server.start(wait = false)
         return server
@@ -194,7 +193,7 @@ class CliRelayIntegrationTest {
             }
             delay(300)
 
-            // Session page should be available
+            // Session page should be available (renders even without relay in proxy-only mode)
             val client = newHttpClient()
             val response1 = client.get("http://localhost:$port/s/$sessionId")
             assertEquals(200, response1.status.value)
@@ -204,9 +203,9 @@ class CliRelayIntegrationTest {
             cliJob.join()
             delay(300)
 
-            // Session page should now return 404
+            // Session page still renders (proxy-only mode always serves the page)
             val response2 = client.get("http://localhost:$port/s/$sessionId")
-            assertEquals(404, response2.status.value)
+            assertEquals(200, response2.status.value)
 
             cliClient.close()
             client.close()

@@ -46,11 +46,11 @@ class BrowserIntegrationTest {
             manager.agentName = "test-agent"
             manager.agentVersion = "1.0.0"
 
-            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"), GatewayMode.LOCAL)
+            val holder = AgentHolder(emptyList(), System.getProperty("user.dir"))
             holder.manager = manager
             holder.currentAgent = RegistryAgent(id = "test-agent", name = "test-agent", version = "1.0.0")
             server = embeddedServer(CIO, port = port) {
-                module(holder, GatewayMode.LOCAL, debug = true)
+                devModule(holder, debug = true)
             }
             server.start(wait = false)
 
