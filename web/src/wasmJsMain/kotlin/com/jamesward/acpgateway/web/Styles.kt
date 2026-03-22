@@ -143,8 +143,30 @@ private fun IComponent.headerStyles() {
         color = textPrimary
         setStyle("border-color", "var(--text-secondary)")
     }
-    globalStyle(selector = "header .btn-theme") {
+    globalStyle(selector = "header .btn-github") {
         setStyle("margin-left", "auto")
+        setStyle("display", "inline-flex")
+        setStyle("align-items", "center")
+        setStyle("padding", "4px 12px")
+        borderRadius = radius
+        border = Border(1.px, BorderStyle.Solid, borderSubtle)
+        background = Background(color = Color("transparent"))
+        color = textSecondary
+        fontSize = 14.px
+        cursor = Cursor.Pointer
+        textDecoration = TextDecoration(TextDecorationLine.None)
+        transitionList = listOf(
+            Transition("background", 150.milliseconds),
+            Transition("color", 150.milliseconds),
+            Transition("border-color", 150.milliseconds),
+        )
+    }
+    globalStyle(selector = "header .btn-github:hover") {
+        background = Background(color = bgCardHover)
+        color = textPrimary
+        setStyle("border-color", "var(--text-secondary)")
+    }
+    globalStyle(selector = "header .btn-theme") {
         fontSize = 14.px
     }
 }
