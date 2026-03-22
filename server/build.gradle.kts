@@ -99,8 +99,9 @@ jib {
     }
     to {
         image = project.findProperty("jib.to.image")?.toString() ?: "acp-web-gateway"
+        val cleanVersion = project.version.toString().removePrefix("v").removeSuffix(".dirty")
         tags = (project.findProperty("jib.to.tags")?.toString()
-            ?: "${project.version},latest").split(",").toSet()
+            ?: "$cleanVersion,latest").split(",").toSet()
     }
     container {
         mainClass = "com.jamesward.acpgateway.server.ServerKt"
