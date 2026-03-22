@@ -46,9 +46,11 @@ graalvmNative {
                 "--gc=epsilon",
                 "-H:+UnlockExperimentalVMOptions",
                 "-H:-IncludeMethodData",
-                "-H:+StripDebugInfo",
                 "--exclude-config", "kotlin-reflect-2\\..*\\.jar", "META-INF/native-image/.*",
             )
+            if (!org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
+                buildArgs.add("-H:+StripDebugInfo")
+            }
             javaLauncher = javaToolchains.launcherFor {
                 languageVersion = JavaLanguageVersion.of(25)
                 vendor = JvmVendorSpec.GRAAL_VM
