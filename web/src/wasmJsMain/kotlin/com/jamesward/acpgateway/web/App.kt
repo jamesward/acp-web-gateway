@@ -7,213 +7,21 @@ import com.jamesward.acpgateway.shared.*
 import dev.kilua.Application
 import dev.kilua.compose.root
 import dev.kilua.core.IComponent
-import dev.kilua.form.text.textArea
 import dev.kilua.html.*
 import dev.kilua.rpc.getService
 import dev.kilua.startApplication
-import io.ktor.client.engine.js.*
 import io.ktor.client.request.*
-import js.typedarrays.Uint8Array
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.await
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import web.blob.arrayBuffer
 import web.console.console
 import web.dom.document
 import web.file.File
 import web.html.HTMLCanvasElement
-import web.html.HTMLElement
+import web.keyboard.KeyboardEvent
 import web.location.location
-import kotlin.js.Promise
-
-
-/** Required by Kilua RPC to set the WebSocket URL prefix */
-fun setRpcUrlPrefix(prefix: String): Unit = js("globalThis.rpc_url_prefix = prefix")
-
-// ---- Console capture & browser state collection (JS bridges) ----
-
-/** Install console.log/warn/error interceptors, buffering last 50 entries. */
-@JsFun("""() => {
-    if (globalThis.__consoleCaptured) return;
-    globalThis.__consoleCaptured = true;
-    globalThis.__consoleBuffer = [];
-    const MAX = 50;
-    ['log','warn','error'].forEach(level => {
-        const orig = console[level].bind(console);
-        console[level] = function() {
-            const args = Array.from(arguments).map(a => {
-                try { return typeof a === 'string' ? a : JSON.stringify(a); } catch(e) { return String(a); }
-            }).join(' ');
-            globalThis.__consoleBuffer.push({ ts: new Date().toISOString(), level: level, msg: args });
-            if (globalThis.__consoleBuffer.length > MAX) globalThis.__consoleBuffer.shift();
-            orig.apply(console, arguments);
-        };
-    });
-}""")
-private external fun installConsoleCapture()
-
-/** Return captured console entries as JSON string. */
-@JsFun("""() => {
-    return JSON.stringify(globalThis.__consoleBuffer || []);
-}""")
-private external fun getConsoleLogs(): String
-
-/** Collect DOM state summary as JSON string. */
-@JsFun("""() => {
-    const msgs = document.getElementById('messages');
-    const msgCount = msgs ? msgs.children.length : -1;
-    const permDialog = document.querySelector('.permission-overlay');
-    const state = {
-        messageCount: msgCount,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        permissionDialogVisible: permDialog !== null,
-        title: document.title,
-        bodyClasses: document.body.className,
-        url: location.href
-    };
-    return JSON.stringify(state);
-}""")
-private external fun getDomState(): String
-
-/** Check if #messages is scrolled to (near) the bottom. */
-@JsFun("""() => {
-    const el = document.getElementById('messages');
-    if (!el) return true;
-    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
-}""")
-private external fun isMessagesAtBottom(): Boolean
-
-/** Scroll #messages to the bottom. */
-@JsFun("""() => {
-    const el = document.getElementById('messages');
-    if (el) el.scrollTop = el.scrollHeight;
-}""")
-private external fun scrollMessagesToBottom()
-
-/** Trigger a client-side file download with the given filename and text content. */
-@JsFun("""(filename, content) => {
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-}""")
-private external fun downloadTextFile(filename: String, content: String)
-
-/** Install a scroll listener on #messages that tracks atBottom in a JS global. */
-@JsFun("""() => {
-    const el = document.getElementById('messages');
-    if (!el) return;
-    globalThis.__messagesAtBottom = true;
-    el.addEventListener('scroll', () => {
-        globalThis.__messagesAtBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
-    });
-}""")
-private external fun installScrollListener()
-
-/** Read the current atBottom state from the JS global. */
-@JsFun("() => { return globalThis.__messagesAtBottom !== false; }")
-private external fun readScrollAtBottom(): Boolean
-
-// ---- Theme management (JS bridges) ----
-
-/** Inject theme CSS custom properties and apply saved preference from localStorage. */
-@JsFun("() => {" +
-    "if(document.getElementById('theme-vars'))return;" +
-    "var s=document.createElement('style');s.id='theme-vars';" +
-    "var d='--bg-body:#0d1117;--bg-header:#161b22;--bg-card:#161b22;--bg-card-hover:#1c2128;--bg-input:#0d1117;--bg-user-msg:#1f6feb;--bg-overlay:rgba(0,0,0,0.6);--border-subtle:#30363d;--text-primary:#e6edf3;--text-secondary:#8b949e;--text-muted:#6e7681;--text-on-blue:#fff;--accent-blue:#1f6feb;--accent-red:#da3633;--accent-yellow:#d29922;--accent-green:#3fb950;--accent-red-hover:#f85149;--code-bg:rgba(110,118,129,0.2);--file-tag-bg:rgba(255,255,255,0.15);--file-tag-color:rgba(255,255,255,0.9);--shadow-color:rgba(0,0,0,0.3);--icon-filter:brightness(0) invert(1);--error-bg:rgba(218,54,51,0.1);color-scheme:dark;';" +
-    "var l='--bg-body:#ffffff;--bg-header:#f6f8fa;--bg-card:#f6f8fa;--bg-card-hover:#eaeef2;--bg-input:#ffffff;--bg-user-msg:#1f6feb;--bg-overlay:rgba(0,0,0,0.4);--border-subtle:#d0d7de;--text-primary:#1f2328;--text-secondary:#656d76;--text-muted:#8c959f;--text-on-blue:#fff;--accent-blue:#1f6feb;--accent-red:#cf222e;--accent-yellow:#bf8700;--accent-green:#1a7f37;--accent-red-hover:#a40e26;--code-bg:rgba(175,184,193,0.2);--file-tag-bg:rgba(0,0,0,0.08);--file-tag-color:rgba(0,0,0,0.7);--shadow-color:rgba(0,0,0,0.1);--icon-filter:none;--error-bg:rgba(207,34,46,0.1);color-scheme:light;';" +
-    "s.textContent=':root{'+d+'}@media(prefers-color-scheme:light){:root:not([data-theme=dark]){'+l+'}}[data-theme=light]{'+l+'}[data-theme=dark]{'+d+'}';" +
-    "document.head.insertBefore(s,document.head.firstChild);" +
-    "try{var v=localStorage.getItem('acp-theme');if(v)document.documentElement.setAttribute('data-theme',v);}catch(e){}" +
-    "}")
-private external fun installTheme()
-
-/** Get current theme preference: "auto", "light", or "dark". */
-@JsFun("() => { try{return localStorage.getItem('acp-theme')||'auto';}catch(e){return 'auto';} }")
-private external fun getThemePreference(): String
-
-/** Cycle theme: auto -> opposite-of-system -> same-as-system -> auto. Returns new preference. */
-@JsFun("""(current) => {
-    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const opposite = systemDark ? 'light' : 'dark';
-    const same = systemDark ? 'dark' : 'light';
-    const next = current === 'auto' ? opposite : current === opposite ? same : 'auto';
-    if (next === 'auto') {
-        try{localStorage.removeItem('acp-theme');}catch(e){}
-        document.documentElement.removeAttribute('data-theme');
-    } else {
-        try{localStorage.setItem('acp-theme', next);}catch(e){}
-        document.documentElement.setAttribute('data-theme', next);
-    }
-    return next;
-}""")
-private external fun cycleTheme(current: String): String
-
-/** Opens a file picker dialog and returns the selected FileList via a Promise. */
-@JsFun("""(multiple) => new Promise(function(resolve) {
-    var input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = multiple;
-    input.addEventListener('change', function() { resolve(input.files); });
-    input.click();
-})""")
-private external fun pickFiles(multiple: Boolean): Promise<JsAny?>
-
-/** Shared ktor HttpClient for simple requests */
-private val httpClient = io.ktor.client.HttpClient(Js)
-
-@JsModule("html2canvas")
-external fun html2canvas(htmlElement: HTMLElement): Promise<HTMLCanvasElement>
-
-private data class FileData(val name: String, val mimeType: String, val base64: String)
-
-@OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
-private suspend fun readFile(file: File): FileData {
-    val buffer = file.arrayBuffer()
-    val uint8 = Uint8Array(buffer)
-    val bytes = ByteArray(uint8.length) { uint8[it].toInt().toByte() }
-    val base64 = kotlin.io.encoding.Base64.encode(bytes)
-    return FileData(file.name, file.type.ifEmpty { "application/octet-stream" }, base64)
-}
-
-private suspend fun readFileList(files: web.file.FileList): List<FileData> {
-    val result = mutableListOf<FileData>()
-    for (i in 0 until files.length) {
-        val file = files.item(i) ?: continue
-        result.add(readFile(file))
-    }
-    return result
-}
-
-// ---- Client-side data models ----
-
-data class ToolCallState(
-    val id: String,
-    val title: String,
-    val status: ToolStatus,
-    val content: String? = null,
-    val contentHtml: String? = null,
-    val kind: ToolKind? = null,
-    val location: String? = null,
-)
-
-sealed class ChatMessage {
-    data class User(val text: String, val fileNames: List<String> = emptyList()) : ChatMessage()
-    data class Assistant(val markdown: String, val usage: String? = null) : ChatMessage()
-    data class Thought(val markdown: String, val usage: String? = null) : ChatMessage()
-    data class ToolBlock(val tools: List<ToolCallState>) : ChatMessage()
-    data class Error(val message: String) : ChatMessage()
-}
-
-// ---- Kilua Application ----
 
 class App : Application() {
 
@@ -278,7 +86,7 @@ class App : Application() {
     private var timerJob: kotlinx.coroutines.Job? = null
 
     private fun addFiles(files: List<FileData>) {
-        pendingFiles = pendingFiles + files.map { FileAttachment(it.name, it.mimeType, it.base64) }
+        pendingFiles = pendingFiles + toFileAttachments(files)
     }
 
     /** Reads files from a FileList and adds them to pendingFiles */
@@ -375,12 +183,10 @@ class App : Application() {
                 agentName = msg.agentName
                 agentVersion = msg.agentVersion
                 cwd = msg.cwd
-                // Clear switching modal and errors when the new agent is ready
                 if (msg.agentName != "No agent selected" && msg.agentName != "Agent failed to start") {
                     switchingAgent = null
                     agentError = null
                 }
-                // Reset state on fresh connect (not a delta resume)
                 if (!didResume) {
                     messages = emptyList()
                     collapseBeforeIndex = 0
@@ -396,30 +202,18 @@ class App : Application() {
                 messages = messages + ChatMessage.User(msg.text, msg.fileNames)
             }
             is WsMessage.AgentText -> {
-                // Accumulate delta chunks by msgId
                 val existing = currentResponse
                 if (existing != null && existing.first == msg.msgId) {
-                    // Same msgId — append delta
                     currentResponse = Triple(msg.msgId, existing.second + msg.markdown, msg.usage ?: existing.third)
-                } else if (msg.msgId.startsWith("history-")) {
-                    // History replay sends full text, not delta
-                    currentResponse = Triple(msg.msgId, msg.markdown, msg.usage ?: "")
                 } else {
-                    // New msgId — start fresh
                     currentResponse = Triple(msg.msgId, msg.markdown, msg.usage ?: "")
                 }
             }
             is WsMessage.AgentThought -> {
-                // Accumulate delta chunks by thoughtId
                 val existing = currentThought
                 if (existing != null && existing.first == msg.thoughtId) {
-                    // Same thoughtId — append delta
                     currentThought = Triple(msg.thoughtId, existing.second + msg.markdown, msg.usage ?: existing.third)
-                } else if (msg.thoughtId.startsWith("history-")) {
-                    // History replay sends full text, not delta
-                    currentThought = Triple(msg.thoughtId, msg.markdown, msg.usage ?: "")
                 } else {
-                    // New thoughtId — start fresh
                     currentThought = Triple(msg.thoughtId, msg.markdown, msg.usage ?: "")
                 }
             }
@@ -450,7 +244,7 @@ class App : Application() {
                 val newMessages = mutableListOf<ChatMessage>()
                 newMessages.addAll(messages)
                 currentThought?.let { (_, html, usage) ->
-                    newMessages.add(ChatMessage.Thought(html, usage.ifEmpty { null }))
+                    newMessages.add(ChatMessage.Thought(html, usage.ifEmpty { null }, elapsedSeconds = elapsedSeconds))
                 }
                 if (currentToolCalls.isNotEmpty()) {
                     newMessages.add(ChatMessage.ToolBlock(currentToolCalls.toList()))
@@ -527,7 +321,7 @@ class App : Application() {
                 }
             }
 
-            // GitHub link — pushed to far right via margin-left:auto
+            // GitHub link
             tag("a") {
                 className("btn-github")
                 attribute("href", "https://github.com/jamesward/acp-web-gateway")
@@ -538,9 +332,9 @@ class App : Application() {
 
             // Theme toggle
             val themeIcon = when (themePreference) {
-                "light" -> "\u2600\uFE0F" // sun
-                "dark" -> "\uD83C\uDF19" // crescent moon
-                else -> "\uD83D\uDCBB" // computer (auto/system)
+                "light" -> "\u2600\uFE0F"
+                "dark" -> "\uD83C\uDF19"
+                else -> "\uD83D\uDCBB"
             }
             val themeLabel = when (themePreference) {
                 "light" -> "Light mode"
@@ -556,7 +350,23 @@ class App : Application() {
 
         // Agent selector
         if (showAgentSelector && availableAgents.isNotEmpty()) {
-            agentSelectorView()
+            agentSelectorView(
+                agents = availableAgents,
+                currentAgentId = currentAgentId,
+                agentError = agentError,
+                onDismiss = { showAgentSelector = false },
+                onSelect = { agent ->
+                    sendWs(WsMessage.ChangeAgent(agent.id))
+                    messages = listOf()
+                    currentThought = null
+                    currentResponse = null
+                    currentToolCalls = listOf()
+                    permissionRequest = null
+                    agentWorking = false
+                    showAgentSelector = false
+                    switchingAgent = agent.name
+                },
+            )
         }
 
         val switching = switchingAgent
@@ -573,7 +383,7 @@ class App : Application() {
                     when (msg) {
                         is ChatMessage.User -> userMessageView(msg.text, msg.fileNames)
                         is ChatMessage.Assistant -> assistantMessageView(msg.markdown, msg.usage, expanded)
-                        is ChatMessage.Thought -> thoughtMessageView(msg.markdown, msg.usage, expanded = expanded)
+                        is ChatMessage.Thought -> thoughtMessageView(msg.markdown, msg.usage, elapsedSeconds = msg.elapsedSeconds, expanded = expanded)
                         is ChatMessage.ToolBlock -> toolBlockView(msg.tools)
                         is ChatMessage.Error -> errorMessageView(msg.message)
                     }
@@ -581,7 +391,7 @@ class App : Application() {
             }
             // Current turn in-progress
             currentThought?.let { (_, html, usage) ->
-                thoughtMessageView(html, usage.ifEmpty { null }, showTimer = true)
+                thoughtMessageView(html, usage.ifEmpty { null }, showTimer = true, elapsedSeconds = elapsedSeconds)
             }
             if (currentToolCalls.isNotEmpty()) {
                 toolBlockView(currentToolCalls)
@@ -593,7 +403,7 @@ class App : Application() {
 
         // Install scroll listener after DOM is committed, then poll scroll state
         LaunchedEffect(Unit) {
-            delay(100) // ensure DOM is flushed
+            delay(100)
             installScrollListener()
             while (true) {
                 atBottom = readScrollAtBottom()
@@ -617,394 +427,84 @@ class App : Application() {
         }
 
         // Input bar
-        inputBar()
+        inputBar(
+            pendingFiles = pendingFiles,
+            autocompleteFiltered = autocompleteFiltered,
+            autocompleteSelectedIndex = autocompleteSelectedIndex,
+            promptText = promptText,
+            agentWorking = agentWorking,
+            debugMode = debugMode,
+            screenshotEnabled = screenshotEnabled,
+            onRemoveFile = { index -> pendingFiles = pendingFiles.filterIndexed { i, _ -> i != index } },
+            onCompleteCommand = { name -> completeCommand(name) },
+            onAttachClick = {
+                scope.launch {
+                    val fileList: web.file.FileList = pickFiles(true).await()
+                    if (fileList.length > 0) {
+                        addFiles(readFileList(fileList))
+                    }
+                }
+            },
+            onSubmit = {
+                dismissAutocomplete()
+                if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+            },
+            onPromptInput = { value ->
+                promptText = value
+                updateAutocomplete(value)
+            },
+            onKeydown = onKeydown@{ e ->
+                if (autocompleteFiltered.isNotEmpty()) {
+                    when (e.key) {
+                        "Tab" -> {
+                            e.preventDefault()
+                            val idx = if (autocompleteSelectedIndex >= 0) autocompleteSelectedIndex else 0
+                            if (idx < autocompleteFiltered.size) {
+                                completeCommand(autocompleteFiltered[idx].name)
+                            }
+                            return@onKeydown
+                        }
+                        "Escape" -> {
+                            e.preventDefault()
+                            dismissAutocomplete()
+                            return@onKeydown
+                        }
+                        "ArrowDown" -> {
+                            e.preventDefault()
+                            autocompleteSelectedIndex = ((autocompleteSelectedIndex + 1) % autocompleteFiltered.size)
+                            return@onKeydown
+                        }
+                        "ArrowUp" -> {
+                            e.preventDefault()
+                            autocompleteSelectedIndex = if (autocompleteSelectedIndex <= 0) autocompleteFiltered.size - 1 else autocompleteSelectedIndex - 1
+                            return@onKeydown
+                        }
+                    }
+                }
+                if (e.key == "Enter" && !e.shiftKey) {
+                    e.preventDefault()
+                    dismissAutocomplete()
+                    if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+                }
+            },
+            onDropFiles = { files -> readAndAddFiles(files) },
+            onPaste = { e -> handlePasteFiles(e) },
+            onDiagnose = { sendWs(WsMessage.Diagnose) },
+            onScreenshotToggle = { screenshotEnabled = !screenshotEnabled },
+            onDownloadLog = { downloadChatLog() },
+        )
 
         // Permission dialog
         val perm = permissionRequest
         if (perm != null) {
-            permissionDialog(perm)
-        }
-    }
-
-    @Composable
-    private fun IComponent.userMessageView(text: String, fileNames: List<String> = emptyList()) {
-        div(className = "msg msg-user") {
-            div(className = "msg-content") {
-                if (text.isNotEmpty()) +text
-                if (fileNames.isNotEmpty()) {
-                    div(className = "msg-files") {
-                        for (name in fileNames) {
-                            span(className = "msg-file-tag") { +name }
-                        }
-                    }
-                }
+            permissionDialog(perm) { toolCallId, optionId ->
+                sendWs(WsMessage.PermissionResponse(toolCallId, optionId))
+                permissionRequest = null
             }
         }
     }
 
-    @Composable
-    private fun IComponent.assistantMessageView(markdown: String, usage: String?, expanded: Boolean = true) {
-        div(className = "msg msg-assistant") {
-            details {
-                if (expanded) attribute("open", "")
-                summary {
-                    span { +"Response" }
-                    if (usage != null) {
-                        span { +" \u00b7 $usage" }
-                    }
-                }
-                div(className = "msg-body") {
-                    rawHtml(dev.kilua.marked.parseMarkdown(markdown))
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun IComponent.thoughtMessageView(markdown: String, usage: String?, showTimer: Boolean = false, expanded: Boolean = true) {
-        div(className = "msg msg-thought") {
-            details {
-                if (expanded) attribute("open", "")
-                summary {
-                    span { +"Thinking" }
-                    if (showTimer && elapsedSeconds > 0) {
-                        span { +" ${formatElapsed(elapsedSeconds)}" }
-                    }
-                }
-                div(className = "msg-body") {
-                    rawHtml(dev.kilua.marked.parseMarkdown(markdown))
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun IComponent.toolBlockView(tools: List<ToolCallState>) {
-        val done = tools.count { it.status == ToolStatus.Completed }
-        val failed = tools.count { it.status == ToolStatus.Failed }
-        val running = tools.count { it.status == ToolStatus.InProgress }
-        val total = tools.size
-        val activeName = tools.lastOrNull { it.status == ToolStatus.InProgress }?.title
-
-        div(className = "msg msg-tools") {
-            details {
-                summary {
-                    span(className = "tool-summary-label") {
-                        val label = if (total == 1) "1 tool call" else "$total tool calls"
-                        +label
-                        val parts = mutableListOf<String>()
-                        if (done > 0) parts.add("$done done")
-                        if (failed > 0) parts.add("$failed failed")
-                        if (running > 0) parts.add("$running running")
-                        if (parts.isNotEmpty()) {
-                            +" (${parts.joinToString(", ")})"
-                        }
-                    }
-                    if (activeName != null) {
-                        span(className = "tool-summary-active") { +" \u00b7 $activeName" }
-                    }
-                }
-                div(className = "tools-list") {
-                    for (tc in tools) {
-                        toolRow(tc)
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun IComponent.toolRow(tc: ToolCallState) {
-        val hasContent = tc.contentHtml != null || !tc.content.isNullOrEmpty()
-        if (hasContent) {
-            details(className = "tool-item") {
-                summary {
-                    toolRowSummary(tc)
-                }
-                val contentHtml = tc.contentHtml
-                val contentText = tc.content
-                if (contentHtml != null) {
-                    // Legacy: pre-rendered HTML from older sessions
-                    div(className = "tool-content") { rawHtml(contentHtml) }
-                } else if (!contentText.isNullOrEmpty()) {
-                    // Render through markdown for syntax-highlighted diffs and code blocks
-                    div(className = "tool-content msg-body") {
-                        rawHtml(dev.kilua.marked.parseMarkdown(contentText))
-                    }
-                }
-            }
-        } else {
-            div(className = "tool-item") {
-                toolRowSummary(tc)
-            }
-        }
-    }
-
-    @Composable
-    private fun IComponent.toolRowSummary(tc: ToolCallState) {
-        val iconClass = when (tc.status) {
-            ToolStatus.Completed -> "tool-icon-ok"
-            ToolStatus.Failed -> "tool-icon-fail"
-            else -> "tool-icon-pending"
-        }
-        val icon = when (tc.status) {
-            ToolStatus.Completed -> "\u2713"
-            ToolStatus.Failed -> "\u2717"
-            else -> "\u25CB"
-        }
-        span(className = iconClass) { +icon }
-        span(className = "tool-name") { +" ${tc.title}" }
-        if (tc.location != null) {
-            span(className = "tool-location") { +" \u00b7 ${tc.location.substringAfterLast('/')}" }
-        }
-    }
-
-    @Composable
-    private fun IComponent.agentSelectorView() {
-        div(className = "agent-selector-overlay") {
-            onClick { showAgentSelector = false }
-            div(className = "agent-selector-dialog") {
-                onClick { it.stopPropagation() }
-                h3 { +"Select an Agent" }
-                val err = agentError
-                if (err != null) {
-                    div(className = "msg-error") { +err }
-                }
-                div(className = "agent-selector-list") {
-                    for (agent in availableAgents) {
-                        val isCurrent = agent.id == currentAgentId
-                        div(className = if (isCurrent) "agent-selector-item current" else "agent-selector-item") {
-                            if (!isCurrent) {
-                                onClick {
-                                    sendWs(WsMessage.ChangeAgent(agent.id))
-                                    messages = listOf()
-                                    currentThought = null
-                                    currentResponse = null
-                                    currentToolCalls = listOf()
-                                    permissionRequest = null
-                                    agentWorking = false
-                                    showAgentSelector = false
-                                    switchingAgent = agent.name
-                                }
-                            }
-                            if (agent.icon != null) {
-                                img(src = agent.icon, alt = agent.name) { className("agent-selector-icon") }
-                            } else {
-                                div(className = "agent-selector-icon-placeholder") {
-                                    +(agent.name.firstOrNull()?.uppercase() ?: "?")
-                                }
-                            }
-                            div(className = "agent-selector-info") {
-                                div(className = "agent-selector-name") {
-                                    +agent.name
-                                    if (isCurrent) span(className = "agent-selector-badge") { +"current" }
-                                }
-                                if (agent.description.isNotEmpty()) {
-                                    div(className = "agent-selector-desc") { +agent.description }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun IComponent.switchingAgentModal(name: String) {
-        div(className = "agent-selector-overlay") {
-            div(className = "switching-agent-dialog") {
-                div(className = "switching-spinner")
-                p { +"Switching to $name\u2026" }
-            }
-        }
-    }
-
-    @Composable
-    private fun IComponent.errorMessageView(message: String) {
-        div(className = "msg msg-error") { +message }
-    }
-
-    @Composable
-    private fun IComponent.permissionDialog(perm: WsMessage.PermissionRequest) {
-        div(className = "permission-overlay") {
-            div(className = "permission-dialog") {
-                h3 { +"Permission Required" }
-                p { +perm.title }
-                div(className = "perm-actions") {
-                    for (opt in perm.options) {
-                        button(opt.name) {
-                            onClick {
-                                sendWs(WsMessage.PermissionResponse(perm.toolCallId, opt.optionId))
-                                permissionRequest = null
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun IComponent.inputBar() {
-        div(className = "input-bar") {
-            // File preview
-            if (pendingFiles.isNotEmpty()) {
-                div(className = "file-preview") {
-                    for ((index, file) in pendingFiles.withIndex()) {
-                        span(className = "file-chip") {
-                            +file.name
-                            button("\u00d7") {
-                                title("Remove")
-                                onClick {
-                                    pendingFiles = pendingFiles.filterIndexed { i, _ -> i != index }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Slash command buttons
-            if (autocompleteFiltered.isNotEmpty()) {
-                div(className = "command-buttons") {
-                    for ((i, cmd) in autocompleteFiltered.withIndex()) {
-                        button("/${cmd.name}") {
-                            className(if (i == autocompleteSelectedIndex) "command-btn selected" else "command-btn")
-                            type(ButtonType.Button)
-                            title(cmd.description)
-                            onClick {
-                                completeCommand(cmd.name)
-                            }
-                        }
-                    }
-                }
-            }
-
-            div(className = "input-row") {
-                button("+") {
-                    className("btn-attach")
-                    type(ButtonType.Button)
-                    title("Attach files")
-                    onClick {
-                        scope.launch {
-                            val fileList: web.file.FileList = pickFiles(true).await()
-                            if (fileList.length > 0) {
-                                addFiles(readFileList(fileList))
-                            }
-                        }
-                    }
-                }
-
-                tag("form") {
-                    onEvent<web.events.Event>("submit") { e ->
-                        e.preventDefault()
-                        dismissAutocomplete()
-                        if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
-                    }
-
-                    textArea(
-                        value = promptText,
-                        rows = 3,
-                        placeholder = "Send a message...",
-                        disabled = if (agentWorking) true else null,
-                    ) {
-                        onInput {
-                            promptText = this.value ?: ""
-                            updateAutocomplete(promptText)
-                        }
-                        onKeydown { e ->
-                            if (autocompleteFiltered.isNotEmpty()) {
-                                when (e.key) {
-                                    "Tab" -> {
-                                        e.preventDefault()
-                                        val idx = if (autocompleteSelectedIndex >= 0) autocompleteSelectedIndex else 0
-                                        if (idx < autocompleteFiltered.size) {
-                                            completeCommand(autocompleteFiltered[idx].name)
-                                        }
-                                        return@onKeydown
-                                    }
-                                    "Escape" -> {
-                                        e.preventDefault()
-                                        dismissAutocomplete()
-                                        return@onKeydown
-                                    }
-                                    "ArrowDown" -> {
-                                        e.preventDefault()
-                                        autocompleteSelectedIndex = ((autocompleteSelectedIndex + 1) % autocompleteFiltered.size)
-                                        return@onKeydown
-                                    }
-                                    "ArrowUp" -> {
-                                        e.preventDefault()
-                                        autocompleteSelectedIndex = if (autocompleteSelectedIndex <= 0) autocompleteFiltered.size - 1 else autocompleteSelectedIndex - 1
-                                        return@onKeydown
-                                    }
-                                }
-                            }
-                            if (e.key == "Enter" && !e.shiftKey) {
-                                e.preventDefault()
-                                dismissAutocomplete()
-                                if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
-                            }
-                        }
-                        setDropTarget { e ->
-                            val files = e.dataTransfer?.files ?: return@setDropTarget
-                            if (files.length > 0) {
-                                readAndAddFiles(files)
-                            }
-                        }
-                        onEvent<web.clipboard.ClipboardEvent>("paste") { e ->
-                            handlePasteFiles(e)
-                        }
-                    }
-
-                    div(className = "input-actions") {
-                        div(className = "btn-row") {
-                            if (agentWorking) {
-                                button("Cancel") {
-                                    className("btn-cancel")
-                                    type(ButtonType.Submit)
-                                }
-                                if (debugMode) {
-                                    button("Diagnose") {
-                                        className("btn-diagnose")
-                                        type(ButtonType.Button)
-                                        onClick {
-                                            sendWs(WsMessage.Diagnose)
-                                        }
-                                    }
-                                }
-                            } else {
-                                button("Send") {
-                                    className("btn-send")
-                                    type(ButtonType.Submit)
-                                }
-                            }
-                        }
-                        if (debugMode) {
-                            label(className = "screenshot-label") {
-                                tag("input") {
-                                    attribute("type", "checkbox")
-                                    if (screenshotEnabled) attribute("checked", "")
-                                    onEvent<web.events.Event>("change") {
-                                        screenshotEnabled = !screenshotEnabled
-                                    }
-                                }
-                                +"Screenshot"
-                            }
-                            button("Download Log") {
-                                className("btn-download-log")
-                                type(ButtonType.Button)
-                                onClick { downloadChatLog() }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ---- Paste file handling (Kotlin using web.clipboard.ClipboardEvent) ----
+    // ---- Paste file handling ----
 
     private fun handlePasteFiles(e: web.clipboard.ClipboardEvent) {
         val clipboardData = e.clipboardData ?: return
@@ -1053,19 +553,6 @@ class App : Application() {
     private fun completeCommand(name: String) {
         promptText = "/$name "
         dismissAutocomplete()
-    }
-
-    // ---- Browser state collection ----
-
-    private fun collectBrowserState(query: String): String {
-        return when (query) {
-            "console" -> getConsoleLogs()
-            "dom" -> getDomState()
-            else -> {
-                // "all" or unrecognized — return both
-                """{"console":${getConsoleLogs()},"dom":${getDomState()}}"""
-            }
-        }
     }
 
     // ---- Actions ----
@@ -1156,7 +643,6 @@ class App : Application() {
             scope.launch {
                 val canvasElement = html2canvas(document.documentElement).await<HTMLCanvasElement>()
                 val base64 = canvasElement.toDataURL("image/png").split(',')[1]
-                // todo: if base64 is empty let the user know
                 val screenshot = base64.ifEmpty { throw Exception("Screenshot failed") }
                 sendWs(WsMessage.Prompt(text, screenshot = screenshot, files = files))
             }
@@ -1173,7 +659,6 @@ class App : Application() {
             } catch (e: Throwable) {
                 console.error("doReload: error: $e")
             }
-            // Poll until server is back
             while (true) {
                 delay(1000)
                 try {
@@ -1188,12 +673,6 @@ class App : Application() {
     }
 
     // ---- Status timer ----
-
-    private fun formatElapsed(totalSeconds: Int): String {
-        val minutes = totalSeconds / 60
-        val seconds = totalSeconds % 60
-        return if (minutes > 0) "\u00b7 ${minutes}m ${seconds}s" else "\u00b7 ${seconds}s"
-    }
 
     private fun startStatusTimer() {
         stopStatusTimer()
