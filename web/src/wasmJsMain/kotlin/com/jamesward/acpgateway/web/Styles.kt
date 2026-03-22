@@ -397,6 +397,7 @@ private fun IComponent.messageBubbleStyles() {
     globalStyle(selector = ".msg-assistant > details") {
         background = Background(color = bgCard)
         border = Border(1.px, BorderStyle.Solid, borderSubtle)
+        borderLeft = Border(3.px, BorderStyle.Solid, accentBlue)
         borderRadius = radiusLg
         overflow = Overflow.Hidden
     }
@@ -487,6 +488,7 @@ private fun IComponent.toolStyles() {
     globalStyle(selector = ".msg-tools > details") {
         background = Background(color = bgCard)
         border = Border(1.px, BorderStyle.Solid, borderSubtle)
+        borderLeft = Border(3.px, BorderStyle.Solid, accentGreen)
         borderRadius = radiusLg
         overflow = Overflow.Hidden
     }
