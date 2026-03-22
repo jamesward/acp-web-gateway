@@ -113,7 +113,7 @@ class Acp2Web : CliktCommand(name = "acp2web") {
                 while (true) {
                     // Start agent if we know which one to use (skip if custom command already started)
                     if (currentAgentId != null && currentManager == null) {
-                        currentManager = startAgent(currentAgentId!!, registry, workingDir)
+                        currentManager = startAgent(currentAgentId, registry, workingDir)
                         echo("Agent: ${currentManager.agentName} ${currentManager.agentVersion}")
                     }
 
