@@ -691,29 +691,31 @@ private fun IComponent.inputBarStyles() {
         color = accentRed
     }
 
-    // Autocomplete
-    globalStyle(selector = ".autocomplete-popup") {
-        background = Background(color = bgCard)
-        border = Border(1.px, BorderStyle.Solid, borderSubtle)
+    // Slash command buttons
+    globalStyle(selector = ".command-buttons") {
+        display = Display.Flex
+        setStyle("flex-wrap", "wrap")
+        setStyle("gap", "6px")
+        marginBottom = 6.px
+    }
+    globalStyle(selector = ".command-btn") {
+        setStyle("padding", "4px 12px")
         borderRadius = radius
-        marginBottom = 4.px
-        maxHeight = 200.px
-        overflowY = Overflow.Auto
-    }
-    globalStyle(selector = ".autocomplete-item") {
-        setStyle("padding", "6px 12px")
-        cursor = Cursor.Pointer
-        fontSize = 13.px
-        color = textPrimary
-        transition = Transition("background", 100.milliseconds)
-    }
-    globalStyle(selector = ".autocomplete-item:hover, .autocomplete-item.selected") {
-        background = Background(color = bgCardHover)
-    }
-    globalStyle(selector = ".autocomplete-item span") {
+        border = Border(1.px, BorderStyle.Solid, borderSubtle)
+        background = Background(color = bgCard)
         color = accentBlue
         fontFamily = FONT_MONO
         fontSize = 12.px
+        cursor = Cursor.Pointer
+        transitionList = listOf(
+            Transition("background", 100.milliseconds),
+            Transition("border-color", 100.milliseconds),
+        )
+        whiteSpace = WhiteSpace.Nowrap
+    }
+    globalStyle(selector = ".command-btn:hover, .command-btn.selected") {
+        background = Background(color = bgCardHover)
+        setStyle("border-color", "var(--accent-blue)")
     }
 
     // Input row

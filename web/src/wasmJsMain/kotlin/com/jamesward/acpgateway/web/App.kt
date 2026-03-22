@@ -865,16 +865,17 @@ class App : Application() {
                 }
             }
 
-            // Autocomplete popup
+            // Slash command buttons
             if (autocompleteFiltered.isNotEmpty()) {
-                div(className = "autocomplete-popup") {
+                div(className = "command-buttons") {
                     for ((i, cmd) in autocompleteFiltered.withIndex()) {
-                        div(className = if (i == autocompleteSelectedIndex) "autocomplete-item selected" else "autocomplete-item") {
-                            attribute("title", cmd.description)
+                        button("/${cmd.name}") {
+                            className(if (i == autocompleteSelectedIndex) "command-btn selected" else "command-btn")
+                            type(ButtonType.Button)
+                            title(cmd.description)
                             onClick {
                                 completeCommand(cmd.name)
                             }
-                            span { +"/${cmd.name}" }
                         }
                     }
                 }
