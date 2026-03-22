@@ -720,6 +720,68 @@ private fun IComponent.inputBarStyles() {
         setStyle("border-color", "var(--accent-blue)")
     }
 
+    // File reference autocomplete
+    globalStyle(selector = ".file-autocomplete") {
+        display = Display.Flex
+        flexDirection = FlexDirection.Column
+        marginBottom = 6.px
+        maxHeight = 240.px
+        overflowY = Overflow.Auto
+        overflowX = Overflow.Hidden
+        background = Background(color = bgCard)
+        border = Border(1.px, BorderStyle.Solid, borderSubtle)
+        borderRadius = radius
+        padding = 4.px
+        width = 100.perc
+    }
+    globalStyle(selector = ".file-autocomplete::-webkit-scrollbar") {
+        width = 6.px
+    }
+    globalStyle(selector = ".file-autocomplete::-webkit-scrollbar-track") {
+        background = Background(color = Color("transparent"))
+    }
+    globalStyle(selector = ".file-autocomplete::-webkit-scrollbar-thumb") {
+        background = Background(color = borderSubtle)
+        borderRadius = 3.px
+    }
+    globalStyle(selector = ".file-ref-btn") {
+        display = Display.Flex
+        alignItems = AlignItems.Center
+        setStyle("padding", "6px 10px")
+        borderRadius = 4.px
+        border = Border(style = BorderStyle.None)
+        background = Background(color = Color("transparent"))
+        color = textPrimary
+        fontFamily = FONT_MONO
+        fontSize = 14.px
+        lineHeight = 1.4.units
+        cursor = Cursor.Pointer
+        textAlign = TextAlign.Left
+        whiteSpace = WhiteSpace.Nowrap
+        transition = Transition("background", 100.milliseconds)
+        width = 100.perc
+        setStyle("min-width", "0")
+    }
+    globalStyle(selector = ".file-ref-name") {
+        color = textPrimary
+        setStyle("flex-shrink", "0")
+        setStyle("font-weight", "600")
+    }
+    globalStyle(selector = ".file-ref-path") {
+        color = textSecondary
+        marginLeft = 8.px
+        overflow = Overflow.Hidden
+        textOverflow = TextOverflow.Ellipsis
+        fontSize = 12.px
+        setStyle("min-width", "0")
+    }
+    globalStyle(selector = ".file-ref-btn:hover, .file-ref-btn.selected") {
+        background = Background(color = bgCardHover)
+    }
+    globalStyle(selector = ".file-chip.file-ref") {
+        fontFamily = FONT_MONO
+    }
+
     // Input row
     globalStyle(selector = ".input-row") {
         display = Display.Flex

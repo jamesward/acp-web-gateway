@@ -12,6 +12,7 @@ sealed class WsMessage {
         val text: String,
         val screenshot: String? = null,
         val files: List<FileAttachment> = emptyList(),
+        val resourceLinks: List<ResourceLinkInfo> = emptyList(),
     ) : WsMessage()
 
     /** Server → client: streamed agent response chunk (delta). Client accumulates by msgId. */
@@ -117,6 +118,16 @@ sealed class WsMessage {
         val currentAgentId: String? = null,
     ) : WsMessage()
 
+    /** Client → server: request file listing for @-reference autocomplete. */
+    @Serializable
+    @SerialName("file_list_request")
+    data class FileListRequest(val query: String = "") : WsMessage()
+
+    /** Server → client: file listing response for @-reference autocomplete. */
+    @Serializable
+    @SerialName("file_list_response")
+    data class FileListResponse(val files: List<String>) : WsMessage()
+
     /** Client → server: resume from a given sequence number on reconnect. */
     @Serializable
     @SerialName("resume_from")
@@ -176,6 +187,12 @@ data class CommandInfo(
     val name: String,
     val description: String,
     val inputHint: String? = null,
+)
+
+@Serializable
+data class ResourceLinkInfo(
+    val name: String,
+    val uri: String,
 )
 
 @Serializable

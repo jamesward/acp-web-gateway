@@ -391,6 +391,10 @@ private suspend fun handleClientMessage(
             session.clearTurnBuffer()
             throw AgentSwitchException(wsMsg.agentId)
         }
+        is WsMessage.FileListRequest -> {
+            val files = listProjectFiles(session.cwd, wsMsg.query)
+            output.send(WsMessage.FileListResponse(files))
+        }
         is WsMessage.ResumeFrom -> {
             logger.debug("Ignoring ResumeFrom mid-session: lastSeq={}", wsMsg.lastSeq)
         }
@@ -417,12 +421,13 @@ private suspend fun handlePrompt(
         }
 
         // Send user message to all clients
-        session.broadcast(WsMessage.UserMessage(prompt.text, fileNames = prompt.files.map { it.name }))
+        val fileNames = prompt.files.map { it.name } + prompt.resourceLinks.map { it.name }
+        session.broadcast(WsMessage.UserMessage(prompt.text, fileNames = fileNames))
 
         val events = if (debug && effectivePrompt.text.trim() == "/simulate") {
             buildSimulationResponse()()
         } else {
-            session.prompt(effectivePrompt.text, effectivePrompt.screenshot, effectivePrompt.files)
+            session.prompt(effectivePrompt.text, effectivePrompt.screenshot, effectivePrompt.files, effectivePrompt.resourceLinks)
         }
         val responseText = StringBuilder()
         val thoughtText = StringBuilder()

@@ -72,6 +72,13 @@ class App : Application() {
     private var autocompleteFiltered by mutableStateOf(listOf<CommandInfo>())
     private var autocompleteSelectedIndex by mutableStateOf(-1)
 
+    // File reference (@) autocomplete state
+    private var fileAutocompleteActive by mutableStateOf(false)
+    private var fileAutocompleteResults by mutableStateOf(listOf<String>())
+    private var fileAutocompleteSelectedIndex by mutableStateOf(0)
+    private var pendingResourceLinks by mutableStateOf(listOf<ResourceLinkInfo>())
+    private var fileListJob: kotlinx.coroutines.Job? = null
+
     // Scroll state
     private var atBottom by mutableStateOf(true)
 
@@ -275,6 +282,10 @@ class App : Application() {
             is WsMessage.AvailableCommands -> {
                 availableCommands = msg.commands
             }
+            is WsMessage.FileListResponse -> {
+                fileAutocompleteResults = msg.files
+                if (msg.files.isEmpty()) dismissFileAutocomplete()
+            }
             is WsMessage.BrowserStateRequest -> {
                 val state = collectBrowserState(msg.query)
                 sendWs(WsMessage.BrowserStateResponse(msg.requestId, state))
@@ -429,14 +440,19 @@ class App : Application() {
         // Input bar
         inputBar(
             pendingFiles = pendingFiles,
+            pendingResourceLinks = pendingResourceLinks,
             autocompleteFiltered = autocompleteFiltered,
             autocompleteSelectedIndex = autocompleteSelectedIndex,
+            fileAutocompleteResults = fileAutocompleteResults,
+            fileAutocompleteSelectedIndex = fileAutocompleteSelectedIndex,
             promptText = promptText,
             agentWorking = agentWorking,
             debugMode = debugMode,
             screenshotEnabled = screenshotEnabled,
             onRemoveFile = { index -> pendingFiles = pendingFiles.filterIndexed { i, _ -> i != index } },
+            onRemoveResourceLink = { index -> pendingResourceLinks = pendingResourceLinks.filterIndexed { i, _ -> i != index } },
             onCompleteCommand = { name -> completeCommand(name) },
+            onCompleteFile = { path -> completeFileReference(path) },
             onAttachClick = {
                 scope.launch {
                     val fileList: web.file.FileList = pickFiles(true).await()
@@ -456,7 +472,7 @@ class App : Application() {
             onKeydown = onKeydown@{ e ->
                 if (autocompleteFiltered.isNotEmpty()) {
                     when (e.key) {
-                        "Tab" -> {
+                        "Enter", "Tab" -> {
                             e.preventDefault()
                             val idx = if (autocompleteSelectedIndex >= 0) autocompleteSelectedIndex else 0
                             if (idx < autocompleteFiltered.size) {
@@ -481,10 +497,42 @@ class App : Application() {
                         }
                     }
                 }
+                if (fileAutocompleteResults.isNotEmpty()) {
+                    when (e.key) {
+                        "Tab" -> {
+                            e.preventDefault()
+                            if (fileAutocompleteSelectedIndex < fileAutocompleteResults.size) {
+                                completeFileReference(fileAutocompleteResults[fileAutocompleteSelectedIndex])
+                            }
+                            return@onKeydown
+                        }
+                        "Escape" -> {
+                            e.preventDefault()
+                            dismissFileAutocomplete()
+                            return@onKeydown
+                        }
+                        "ArrowDown" -> {
+                            e.preventDefault()
+                            fileAutocompleteSelectedIndex = ((fileAutocompleteSelectedIndex + 1) % fileAutocompleteResults.size)
+                            return@onKeydown
+                        }
+                        "ArrowUp" -> {
+                            e.preventDefault()
+                            fileAutocompleteSelectedIndex = if (fileAutocompleteSelectedIndex <= 0) fileAutocompleteResults.size - 1 else fileAutocompleteSelectedIndex - 1
+                            return@onKeydown
+                        }
+                    }
+                }
                 if (e.key == "Enter" && !e.shiftKey) {
                     e.preventDefault()
-                    dismissAutocomplete()
-                    if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+                    if (fileAutocompleteResults.isNotEmpty()) {
+                        if (fileAutocompleteSelectedIndex < fileAutocompleteResults.size) {
+                            completeFileReference(fileAutocompleteResults[fileAutocompleteSelectedIndex])
+                        }
+                    } else {
+                        dismissAutocomplete()
+                        if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+                    }
                 }
             },
             onDropFiles = { files -> readAndAddFiles(files) },
@@ -527,22 +575,25 @@ class App : Application() {
     // ---- Autocomplete ----
 
     private fun updateAutocomplete(text: String) {
-        if (availableCommands.isEmpty() || text.isEmpty() || !text.startsWith("/") || text.contains('\n')) {
-            dismissAutocomplete()
-            return
+        // Slash command autocomplete
+        if (availableCommands.isNotEmpty() && text.isNotEmpty() && text.startsWith("/") && !text.contains('\n')) {
+            dismissFileAutocomplete()
+            val query = text.removePrefix("/").lowercase()
+            val filtered = if (query.isEmpty()) {
+                availableCommands
+            } else {
+                availableCommands.filter { it.name.lowercase().contains(query) }
+            }
+            if (filtered.isNotEmpty()) {
+                autocompleteFiltered = filtered
+                autocompleteSelectedIndex = 0
+                return
+            }
         }
-        val query = text.removePrefix("/").lowercase()
-        val filtered = if (query.isEmpty()) {
-            availableCommands
-        } else {
-            availableCommands.filter { it.name.lowercase().contains(query) }
-        }
-        if (filtered.isEmpty()) {
-            dismissAutocomplete()
-            return
-        }
-        autocompleteFiltered = filtered
-        autocompleteSelectedIndex = 0
+        dismissAutocomplete()
+
+        // File reference autocomplete
+        updateFileAutocomplete(text)
     }
 
     private fun dismissAutocomplete() {
@@ -553,6 +604,57 @@ class App : Application() {
     private fun completeCommand(name: String) {
         promptText = "/$name "
         dismissAutocomplete()
+    }
+
+    // ---- File reference autocomplete ----
+
+    /** Find the start of the current @-reference token, or -1 if none. */
+    private fun findAtTokenStart(text: String): Int {
+        // Search backwards from end for an @ that starts a valid file reference
+        val atIndex = text.lastIndexOf('@')
+        if (atIndex < 0) return -1
+        // @ must be preceded by whitespace or be at the start of the text
+        if (atIndex > 0 && !text[atIndex - 1].isWhitespace()) return -1
+        // The query after @ must not contain spaces or newlines (those terminate the reference)
+        val query = text.substring(atIndex + 1)
+        if (query.contains(' ') || query.contains('\n')) return -1
+        return atIndex
+    }
+
+    private fun updateFileAutocomplete(text: String) {
+        val atIndex = findAtTokenStart(text)
+        if (atIndex < 0) {
+            dismissFileAutocomplete()
+            return
+        }
+        val query = text.substring(atIndex + 1)
+        fileAutocompleteActive = true
+        fileAutocompleteSelectedIndex = 0
+        // Debounce the request
+        fileListJob?.cancel()
+        fileListJob = scope.launch {
+            delay(150)
+            sendWs(WsMessage.FileListRequest(query))
+        }
+    }
+
+    private fun dismissFileAutocomplete() {
+        fileAutocompleteActive = false
+        fileAutocompleteResults = emptyList()
+        fileAutocompleteSelectedIndex = 0
+        fileListJob?.cancel()
+    }
+
+    private fun completeFileReference(filePath: String) {
+        val atIndex = findAtTokenStart(promptText)
+        if (atIndex >= 0) {
+            promptText = promptText.substring(0, atIndex) + "@$filePath "
+        }
+        pendingResourceLinks = pendingResourceLinks + ResourceLinkInfo(
+            name = filePath,
+            uri = "file://$filePath",
+        )
+        dismissFileAutocomplete()
     }
 
     // ---- Actions ----
@@ -633,9 +735,11 @@ class App : Application() {
         if (text.isEmpty() && pendingFiles.isEmpty()) return
 
         val files = pendingFiles.toList()
+        val resourceLinks = pendingResourceLinks.toList()
         collapseBeforeIndex = messages.size
         promptText = ""
         pendingFiles = emptyList()
+        pendingResourceLinks = emptyList()
         agentWorking = true
         startStatusTimer()
 
@@ -644,10 +748,10 @@ class App : Application() {
                 val canvasElement = html2canvas(document.documentElement).await<HTMLCanvasElement>()
                 val base64 = canvasElement.toDataURL("image/png").split(',')[1]
                 val screenshot = base64.ifEmpty { throw Exception("Screenshot failed") }
-                sendWs(WsMessage.Prompt(text, screenshot = screenshot, files = files))
+                sendWs(WsMessage.Prompt(text, screenshot = screenshot, files = files, resourceLinks = resourceLinks))
             }
         } else {
-            sendWs(WsMessage.Prompt(text, files = files))
+            sendWs(WsMessage.Prompt(text, files = files, resourceLinks = resourceLinks))
         }
     }
 

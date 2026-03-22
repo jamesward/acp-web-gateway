@@ -209,8 +209,9 @@ class GatewaySession(
         }
     }
 
-    suspend fun prompt(text: String, screenshot: String? = null, files: List<FileAttachment> = emptyList()): Flow<Event> {
-        store.addHistory(id, ChatEntry(role = "user", content = text, timestamp = System.currentTimeMillis(), fileNames = files.map { it.name }.ifEmpty { null }))
+    suspend fun prompt(text: String, screenshot: String? = null, files: List<FileAttachment> = emptyList(), resourceLinks: List<ResourceLinkInfo> = emptyList()): Flow<Event> {
+        val allFileNames = (files.map { it.name } + resourceLinks.map { it.name }).ifEmpty { null }
+        store.addHistory(id, ChatEntry(role = "user", content = text, timestamp = System.currentTimeMillis(), fileNames = allFileNames))
         val inlinedTextParts = mutableListOf<String>()
         val contentBlocks = buildList {
             if (screenshot != null) {
@@ -232,6 +233,10 @@ class GatewaySession(
                         mimeType = file.mimeType,
                     )))
                 }
+            }
+
+            for (link in resourceLinks) {
+                add(ContentBlock.ResourceLink(name = link.name, uri = link.uri))
             }
 
             val fullText = if (inlinedTextParts.isNotEmpty()) {

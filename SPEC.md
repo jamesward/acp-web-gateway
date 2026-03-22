@@ -296,8 +296,6 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
 - Additional functionality
   - Skills Directory with SkillsJars
   - MCP servers
-- Additonal ACP
-  - file references
 - Autopilot
   - /autopilot prompt
   - Have the agent use it's own UI to improve itself, finding more improvements along the way
