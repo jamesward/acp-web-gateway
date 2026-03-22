@@ -288,6 +288,25 @@ class BrowserIntegrationTest {
     }
 
     @Test
+    fun scrollButtonHiddenWhenContentDoesNotOverflow() {
+        // Short response that won't overflow the viewport
+        fakeSession.enqueueTextResponse("Short answer.")
+
+        navigateAndWait()
+        submitAndWait("test")
+        page.locator(".msg-assistant").first().waitFor()
+        // Wait for scroll polling to settle (polls every 200ms)
+        page.waitForTimeout(1500.0)
+
+        // Content doesn't overflow — scroll button must NOT appear
+        val hasOverflow = page.evaluate(
+            "(() => { const el = document.getElementById('messages'); return el.scrollHeight > el.clientHeight; })()"
+        ) as Boolean
+        assertFalse(hasOverflow, "Content should not overflow the messages container")
+        assertFalse(page.locator(".scroll-btn").isVisible(), "Scroll button should not appear when content does not overflow")
+    }
+
+    @Test
     fun sectionOrderIsThinkingToolsResponse() {
         fakeSession.enqueueResponse {
             flow {

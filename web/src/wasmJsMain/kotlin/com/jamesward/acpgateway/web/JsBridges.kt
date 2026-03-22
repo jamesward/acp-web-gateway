@@ -99,8 +99,12 @@ internal external fun downloadTextFile(filename: String, content: String)
 }""")
 internal external fun installScrollListener()
 
-/** Read the current atBottom state from the JS global. */
-@JsFun("() => { return globalThis.__messagesAtBottom !== false; }")
+/** Read the current atBottom state from the JS global, treating no-overflow as at-bottom. */
+@JsFun("""() => {
+    const el = document.getElementById('messages');
+    if (el && el.scrollHeight <= el.clientHeight) return true;
+    return globalThis.__messagesAtBottom !== false;
+}""")
 internal external fun readScrollAtBottom(): Boolean
 
 // ---- Theme management (JS bridges) ----
