@@ -25,6 +25,16 @@ sealed class WsMessage {
         val seq: Long = 0,
     ) : WsMessage()
 
+    /** Server → client: image content from agent response. */
+    @Serializable
+    @SerialName("agent_image")
+    data class AgentImage(
+        val msgId: String,
+        val data: String,
+        val mimeType: String,
+        val seq: Long = 0,
+    ) : WsMessage()
+
     /** Server → client: streamed agent thought chunk (delta). Client accumulates by thoughtId. */
     @Serializable
     @SerialName("agent_thought")
@@ -46,6 +56,7 @@ sealed class WsMessage {
         val contentHtml: String? = null,
         val kind: ToolKind? = null,
         val location: String? = null,
+        val images: List<ToolCallImage>? = null,
         val seq: Long = 0,
     ) : WsMessage()
 
@@ -55,6 +66,7 @@ sealed class WsMessage {
         val toolCallId: String,
         val title: String,
         val options: List<PermissionOptionInfo>,
+        val description: String? = null,
     ) : WsMessage()
 
     @Serializable
@@ -86,22 +98,10 @@ sealed class WsMessage {
     @SerialName("cancel")
     data object Cancel : WsMessage()
 
-    @Serializable
-    @SerialName("diagnose")
-    data object Diagnose : WsMessage()
-
     /** Server → client: replay a completed user message from history. */
     @Serializable
     @SerialName("user_message")
     data class UserMessage(val text: String, val fileNames: List<String> = emptyList(), val seq: Long = 0) : WsMessage()
-
-    @Serializable
-    @SerialName("browser_state_request")
-    data class BrowserStateRequest(val requestId: String, val query: String = "all") : WsMessage()
-
-    @Serializable
-    @SerialName("browser_state_response")
-    data class BrowserStateResponse(val requestId: String, val state: String) : WsMessage()
 
     @Serializable
     @SerialName("available_commands")
@@ -127,6 +127,11 @@ sealed class WsMessage {
     @Serializable
     @SerialName("file_list_response")
     data class FileListResponse(val files: List<String>) : WsMessage()
+
+    /** Server → client: agent's execution plan update. */
+    @Serializable
+    @SerialName("plan_update")
+    data class PlanUpdate(val entries: List<PlanEntryInfo>, val seq: Long = 0) : WsMessage()
 
     /** Client → server: resume from a given sequence number on reconnect. */
     @Serializable
@@ -167,6 +172,25 @@ enum class PermissionKind {
 
     val isAllow: Boolean get() = this == AllowOnce || this == AllowAlways
 }
+
+@Serializable
+enum class PlanEntryStatus {
+    @SerialName("pending") Pending,
+    @SerialName("in_progress") InProgress,
+    @SerialName("completed") Completed,
+}
+
+@Serializable
+data class PlanEntryInfo(
+    val content: String,
+    val status: PlanEntryStatus,
+)
+
+@Serializable
+data class ToolCallImage(
+    val data: String,
+    val mimeType: String,
+)
 
 @Serializable
 data class FileAttachment(

@@ -229,24 +229,61 @@ Downloaded as `chat-log.md` via the `downloadTextFile` JS bridge.
 
 ## Distribution
 
-- GitHub Actions for automated releases (tag-triggered)
 - Docker container on ghcr.io (base image: `eclipse-temurin:25-jre`, no Node.js/uv — agents run on the CLI side)
 - CLI binaries for macOS (arm64), Linux (amd64), Windows (amd64) as GraalVM native images (~58MB, no JVM required)
 
+### CI/CD
+
+- **Every push to `main`**: runs tests, builds and pushes the Docker image to ghcr.io with tags `<full-version>` (immutable) and `<protocol-version>` (mutable, e.g., `1`).
+- **Tagged releases** (`v*`): runs tests, builds CLI native binaries for all platforms, builds and pushes Docker image, creates GitHub Release with binaries attached.
+- **Heroku** (acp2web.com): deploys `main` automatically. This is safe because the protocol version is tracked in the code — any CLI can check compatibility via the `/health` endpoint or WebSocket handshake.
+
 ### Running via Docker
 
-The published container `ghcr.io/jamesward/acp-web-gateway` runs in proxy-only mode. The CLI starts it automatically via Docker by default.
+The published container `ghcr.io/jamesward/acp-web-gateway` runs in proxy-only mode. The CLI starts it automatically via Docker by default, pulling the latest image matching its protocol version.
 
 ```bash
 # Manual Docker start (proxy-only mode)
 docker run -d --rm \
   -p 8080:8080 \
-  ghcr.io/jamesward/acp-web-gateway
+  ghcr.io/jamesward/acp-web-gateway:1
 ```
 
 - `-p 8080:8080` — Exposes the gateway on `http://localhost:8080`.
+- `:1` — Protocol version tag. Always the latest image compatible with protocol 1.
 - Add `--debug` for debug mode.
 - The container is a plain JRE image — agents run locally via the CLI, not inside the container.
+
+## Versioning
+
+### Scheme: `<protocol>.<date>.<seq>`
+
+- **Protocol version** (major): manually bumped integer in `shared/build.gradle.kts`. Only changes on breaking `WsMessage` protocol changes (removed/renamed message types or required fields, changed serialization structure). Adding new message types or optional fields is non-breaking.
+- **Date**: `YYYYMMDD` of the build.
+- **Sequence**: counter for multiple builds on the same day (starts at 1).
+
+Example: `1.20260322.1` — protocol version 1, built March 22 2026, first build that day.
+
+The version is generated at build time by a Gradle task that writes `Version.kt` into the shared module (KMP, visible to JVM + WasmJS). Local dev builds use protocol version + `0.0` (e.g., `1.0.0`).
+
+### Docker image tags
+
+Every CI build (main push or tagged release) pushes the Docker image with:
+- `<full-version>` — immutable tag (e.g., `1.20260322.1`)
+- `<protocol-version>` — mutable tag (e.g., `1`), always points to the latest compatible image
+
+The CLI pulls `ghcr.io/jamesward/acp-web-gateway:<protocol-version>`, so it always gets the newest server compatible with its protocol.
+
+### CLI↔Server protocol check
+
+- CLI sends `&protocol=<protocol-version>` as a query parameter when connecting to the server WebSocket (`/s/{sessionId}/agent`).
+- Server compares with its own protocol version. On mismatch, closes the WebSocket with a descriptive error: `"Protocol mismatch: server=2, cli=1. Please update your CLI."`
+- Dev builds (protocol `0`) skip the check.
+- `/health` endpoint returns `{"status":"ok","version":"<full>","protocol":<int>}`.
+
+### CLI self-update
+
+`acp2web --update` checks the latest GitHub Release, compares versions, and downloads the appropriate platform binary if an update is available.
 
 ## acp2web CLI
 
@@ -256,7 +293,7 @@ The CLI (`cli/` module) runs the ACP agent locally and connects to a gateway ser
 
 1. CLI checks `~/.acp2web/server.json` for an existing Docker container
 2. If a running container is found (health check passes), reuses it
-3. Otherwise, starts `docker run -d --rm -p <random-port>:8080 ghcr.io/jamesward/acp-web-gateway`
+3. Otherwise, starts `docker run -d --rm -p <random-port>:8080 ghcr.io/jamesward/acp-web-gateway:<protocol-version>`
 4. Creates a UUID session ID and connects to `ws://localhost:<port>/s/{sessionId}/agent`
 5. Prints the browser URL for the user to open
 6. Spawns the ACP agent locally and relays messages
@@ -283,13 +320,12 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
 - Native image reachability metadata for Ktor CIO, Logback, and kotlinx-serialization in `cli/src/main/resources/META-INF/native-image/`
 - The `org.graalvm.buildtools.native` Gradle plugin provides the `nativeCompile` task
 
-**[NOT YET IMPLEMENTED]**:
-- Exponential backoff reconnect on relay WebSocket disconnect
-- Sequence-based delta catch-up on relay reconnect
-
 ## Future
 
+- Client/Server protocol versioning
 - CLI relay reconnect with exponential backoff and sequence-based catch-up
+  - Exponential backoff reconnect on relay WebSocket disconnect
+  - Sequence-based delta catch-up on relay reconnect
 - Global config file for default agent selection
 - Code syntax highlighting in rendered blocks
 - Audio recording support (MediaRecorder API)
@@ -306,4 +342,5 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
 - <tool_use_error>Cancelled: parallel tool call WebFetch errored</tool_use_error>
 - The file diff renderer is or was on the server side. we need to move it to the client side.
 - Kotlin/Native for CLI once Kotlin ACP has native targets
-- API versioning so client & server stay in sync (let the user know when they run the CLI if the server is mismatched)
+
+- Diff rendering

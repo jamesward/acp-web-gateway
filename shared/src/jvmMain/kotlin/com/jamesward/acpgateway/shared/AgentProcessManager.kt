@@ -115,6 +115,7 @@ class GatewaySession(
     /** Stamp a WsMessage with its assigned sequence number. */
     private fun withSeq(msg: WsMessage, seq: Long): WsMessage = when (msg) {
         is WsMessage.AgentText -> msg.copy(seq = seq)
+        is WsMessage.AgentImage -> msg.copy(seq = seq)
         is WsMessage.AgentThought -> msg.copy(seq = seq)
         is WsMessage.ToolCall -> msg.copy(seq = seq)
         is WsMessage.TurnComplete -> msg.copy(seq = seq)
@@ -180,25 +181,13 @@ class GatewaySession(
                             kind = opt.kind.toGatewayKind(),
                         )
                     },
+                    description = pending.description,
                 )
                 activePermission = permMsg
                 broadcast(permMsg)
             }
         }
 
-        scope.launch {
-            for (req in clientOps.pendingBrowserStateRequests) {
-                // Send to first available connection
-                val conn = connections.firstOrNull()
-                if (conn != null) {
-                    try {
-                        conn.send(WsMessage.BrowserStateRequest(req.requestId, req.query))
-                    } catch (e: Exception) {
-                        logger.debug("Failed to send browser state request", e)
-                    }
-                }
-            }
-        }
     }
 
     suspend fun cancelPrompt() {
@@ -249,48 +238,6 @@ class GatewaySession(
         return clientSession.prompt(contentBlocks)
     }
 
-    suspend fun buildDiagnosticContext(): String {
-        val now = System.currentTimeMillis()
-        val elapsed = (now - store.getPromptStartTime(id)) / 1000
-
-        val toolCalls = store.getToolCalls(id)
-        val toolCallLines = toolCalls.entries.joinToString("\n") { (tcId, info) ->
-            val tcElapsed = (now - info.startTime) / 1000
-            "  - $tcId: ${info.title} (${info.status}) — ${tcElapsed}s"
-        }.ifEmpty { "  (none)" }
-
-        val pendingPerms = clientOps.pendingPermissionsSummary()
-
-        val history = store.getHistory(id)
-        val recentHistory = history.takeLast(6).joinToString("\n") { entry ->
-            val content = entry.content.take(200)
-            "[${entry.role}] $content"
-        }
-
-        val browserState = try {
-            clientOps.requestBrowserState("all")
-        } catch (e: Exception) {
-            "(failed to collect: ${e.message})"
-        }
-
-        return """
-            |[SYSTEM DIAGNOSTIC] The user reports that the previous task appears stuck. Analyze the situation and suggest how to proceed.
-            |
-            |Session state:
-            |- Time elapsed: ${elapsed}s
-            |- Active tool calls:
-            |$toolCallLines
-            |- Pending permissions: $pendingPerms
-            |
-            |Browser state:
-            |$browserState
-            |
-            |Recent history:
-            |$recentHistory
-            |
-            |Diagnose what is causing the issue and suggest next steps.
-        """.trimMargin()
-    }
 }
 
 class AgentProcessManager(

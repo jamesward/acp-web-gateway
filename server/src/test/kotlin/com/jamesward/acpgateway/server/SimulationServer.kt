@@ -28,15 +28,15 @@ private const val AUTO_PROMPT = "Explain how Kotlin coroutines work, show exampl
  * A ControllableFakeClientSession that automatically re-enqueues
  * the simulation response after each prompt, enabling re-runs.
  */
-class ReplayableFakeClientSession : ControllableFakeClientSession() {
+class ReplayableFakeClientSession(private val clientOps: GatewayClientOperations? = null) : ControllableFakeClientSession() {
     init {
-        enqueueResponse(buildSimulationResponse())
+        enqueueResponse(buildSimulationResponse(clientOps))
     }
 
     override suspend fun prompt(content: List<ContentBlock>, _meta: kotlinx.serialization.json.JsonElement?): kotlinx.coroutines.flow.Flow<Event> {
         val result = super.prompt(content, _meta)
         // Always have a response ready for the next prompt
-        enqueueResponse(buildSimulationResponse())
+        enqueueResponse(buildSimulationResponse(clientOps))
         return result
     }
 }
@@ -78,13 +78,14 @@ fun main() {
     manager.agentName = "Simulated Agent"
     manager.agentVersion = "1.0.0"
 
-    val fakeSession = ReplayableFakeClientSession()
+    val clientOps = GatewayClientOperations()
+    val fakeSession = ReplayableFakeClientSession(clientOps)
 
     val testScope = CoroutineScope(Dispatchers.Default)
     val session = GatewaySession(
         id = UUID.randomUUID(),
         clientSession = fakeSession,
-        clientOps = GatewayClientOperations(),
+        clientOps = clientOps,
         cwd = System.getProperty("user.dir"),
         scope = testScope,
         store = manager.store,

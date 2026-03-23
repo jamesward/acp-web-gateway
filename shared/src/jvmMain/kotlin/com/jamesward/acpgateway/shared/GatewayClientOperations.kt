@@ -4,7 +4,6 @@ import com.agentclientprotocol.common.ClientSessionOperations
 import com.agentclientprotocol.model.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import org.slf4j.LoggerFactory
 import java.io.File
@@ -16,9 +15,8 @@ data class PendingPermission(
     val title: String,
     val options: List<PermissionOption>,
     val deferred: CompletableDeferred<RequestPermissionResponse>,
+    val description: String? = null,
 )
-
-data class BrowserStateRequestInternal(val requestId: String, val query: String)
 
 class GatewayClientOperations : ClientSessionOperations {
 
@@ -43,9 +41,6 @@ class GatewayClientOperations : ClientSessionOperations {
     val pendingPermissions = Channel<PendingPermission>(Channel.BUFFERED)
     private val pendingDeferreds = ConcurrentHashMap<String, CompletableDeferred<RequestPermissionResponse>>()
 
-    val pendingBrowserStateRequests = Channel<BrowserStateRequestInternal>(Channel.BUFFERED)
-    private val browserStateDeferreds = ConcurrentHashMap<String, CompletableDeferred<String>>()
-
     private val terminals = ConcurrentHashMap<String, Process>()
 
     override suspend fun requestPermissions(
@@ -54,20 +49,17 @@ class GatewayClientOperations : ClientSessionOperations {
         _meta: JsonElement?,
     ): RequestPermissionResponse {
         val deferred = CompletableDeferred<RequestPermissionResponse>()
+        val contentText = extractToolContent(toolCall.content)?.text
         val pending = PendingPermission(
             toolCallId = toolCall.toolCallId.value,
             title = toolCall.title ?: "Permission requested",
             options = permissions,
             deferred = deferred,
+            description = contentText,
         )
         pendingDeferreds[toolCall.toolCallId.value] = deferred
         pendingPermissions.send(pending)
         return deferred.await()
-    }
-
-    fun pendingPermissionsSummary(): String {
-        val ids = pendingDeferreds.keys().toList()
-        return if (ids.isEmpty()) "(none)" else ids.joinToString(", ")
     }
 
     fun completePermission(toolCallId: String, optionId: String) {
@@ -80,24 +72,6 @@ class GatewayClientOperations : ClientSessionOperations {
             )
         } else {
             logger.warn("No pending permission for toolCallId: {}", toolCallId)
-        }
-    }
-
-    suspend fun requestBrowserState(query: String): String {
-        val requestId = UUID.randomUUID().toString()
-        val deferred = CompletableDeferred<String>()
-        browserStateDeferreds[requestId] = deferred
-        pendingBrowserStateRequests.send(BrowserStateRequestInternal(requestId, query))
-        return withTimeoutOrNull(10_000) { deferred.await() }
-            ?: """{"error":"browser state request timed out"}"""
-    }
-
-    fun completeBrowserState(requestId: String, state: String) {
-        val deferred = browserStateDeferreds.remove(requestId)
-        if (deferred != null) {
-            deferred.complete(state)
-        } else {
-            logger.warn("No pending browser state request for requestId: {}", requestId)
         }
     }
 
@@ -118,12 +92,6 @@ class GatewayClientOperations : ClientSessionOperations {
         limit: UInt?,
         _meta: JsonElement?,
     ): ReadTextFileResponse {
-        if (path.startsWith("browser://")) {
-            val query = path.removePrefix("browser://").ifEmpty { "all" }
-            logger.info("Browser state request: query={}", query)
-            val state = requestBrowserState(query)
-            return ReadTextFileResponse(content = state)
-        }
         logger.debug("fsReadTextFile: path={}, line={}, limit={}", path, line, limit)
         val file = File(path)
         val lines = file.readLines()

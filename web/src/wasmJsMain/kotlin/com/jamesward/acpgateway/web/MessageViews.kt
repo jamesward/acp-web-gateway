@@ -1,6 +1,8 @@
 package com.jamesward.acpgateway.web
 
 import androidx.compose.runtime.Composable
+import com.jamesward.acpgateway.shared.PlanEntryInfo
+import com.jamesward.acpgateway.shared.PlanEntryStatus
 import com.jamesward.acpgateway.shared.ToolStatus
 import dev.kilua.core.IComponent
 import dev.kilua.html.*
@@ -33,7 +35,7 @@ fun IComponent.assistantMessageView(markdown: String, usage: String?, expanded: 
                 }
             }
             div(className = "msg-body") {
-                rawHtml(dev.kilua.marked.parseMarkdown(markdown))
+                rawHtml(renderMarkdown(markdown))
             }
         }
     }
@@ -58,7 +60,7 @@ fun IComponent.thoughtMessageView(markdown: String, usage: String?, showTimer: B
                 }
             }
             div(className = "msg-body") {
-                rawHtml(dev.kilua.marked.parseMarkdown(markdown))
+                rawHtml(renderMarkdown(markdown))
             }
         }
     }
@@ -101,7 +103,7 @@ fun IComponent.toolBlockView(tools: List<ToolCallState>) {
 
 @Composable
 private fun IComponent.toolRow(tc: ToolCallState) {
-    val hasContent = tc.contentHtml != null || !tc.content.isNullOrEmpty()
+    val hasContent = tc.contentHtml != null || !tc.content.isNullOrEmpty() || !tc.images.isNullOrEmpty()
     if (hasContent) {
         details(className = "tool-item") {
             summary {
@@ -113,7 +115,16 @@ private fun IComponent.toolRow(tc: ToolCallState) {
                 div(className = "tool-content") { rawHtml(contentHtml) }
             } else if (!contentText.isNullOrEmpty()) {
                 div(className = "tool-content msg-body") {
-                    rawHtml(dev.kilua.marked.parseMarkdown(contentText))
+                    rawHtml(renderMarkdown(contentText))
+                }
+            }
+            val images = tc.images
+            if (!images.isNullOrEmpty()) {
+                div(className = "tool-content") {
+                    val imgHtml = images.joinToString("") { img ->
+                        "<img src=\"data:${img.mimeType};base64,${img.data}\" alt=\"Tool result image\" class=\"agent-image\">"
+                    }
+                    rawHtml(imgHtml)
                 }
             }
         }
@@ -140,6 +151,37 @@ private fun IComponent.toolRowSummary(tc: ToolCallState) {
     span(className = "tool-name") { +" ${tc.title}" }
     if (tc.location != null) {
         span(className = "tool-location") { +" \u00b7 ${tc.location.substringAfterLast('/')}" }
+    }
+}
+
+@Composable
+fun IComponent.imageMessageView(data: String, mimeType: String) {
+    div(className = "msg msg-assistant") {
+        div(className = "msg-body") {
+            img(src = "data:$mimeType;base64,$data", alt = "Agent image", className = "agent-image")
+        }
+    }
+}
+
+@Composable
+fun IComponent.planView(entries: List<PlanEntryInfo>) {
+    div(className = "plan-view") {
+        for (entry in entries) {
+            val statusClass = when (entry.status) {
+                PlanEntryStatus.Completed -> "plan-completed"
+                PlanEntryStatus.InProgress -> "plan-in-progress"
+                PlanEntryStatus.Pending -> "plan-pending"
+            }
+            val icon = when (entry.status) {
+                PlanEntryStatus.Completed -> "\u2713"
+                PlanEntryStatus.InProgress -> "\u25B6"
+                PlanEntryStatus.Pending -> "\u25CB"
+            }
+            div(className = "plan-entry $statusClass") {
+                span(className = "plan-icon") { +icon }
+                span(className = "plan-content") { +entry.content }
+            }
+        }
     }
 }
 

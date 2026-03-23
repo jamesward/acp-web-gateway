@@ -4,6 +4,7 @@ import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.model.AvailableCommandInput
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.EmbeddedResourceResource
 import com.agentclientprotocol.model.PermissionOptionKind
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.ToolCallContent
@@ -60,17 +61,29 @@ fun PermissionOptionKind.toGatewayKind(): PermissionKind = when (this) {
     PermissionOptionKind.REJECT_ALWAYS -> PermissionKind.RejectAlways
 }
 
-private data class ToolContent(val text: String? = null)
+internal data class ToolContent(
+    val text: String? = null,
+    val images: List<ToolCallImage>? = null,
+)
 
-private fun extractToolContent(content: List<ToolCallContent>?): ToolContent? {
+internal fun extractToolContent(content: List<ToolCallContent>?): ToolContent? {
     if (content.isNullOrEmpty()) return null
     val textParts = mutableListOf<String>()
+    val images = mutableListOf<ToolCallImage>()
     for (tc in content) {
         when (tc) {
             is ToolCallContent.Content -> {
                 when (val block = tc.content) {
                     is ContentBlock.Text -> textParts.add(block.text)
-                    else -> {}
+                    is ContentBlock.Image -> images.add(ToolCallImage(data = block.data, mimeType = block.mimeType))
+                    is ContentBlock.Audio -> textParts.add("[Audio: ${block.mimeType}]")
+                    is ContentBlock.Resource -> {
+                        when (val res = block.resource) {
+                            is EmbeddedResourceResource.TextResourceContents -> textParts.add(res.text)
+                            is EmbeddedResourceResource.BlobResourceContents -> textParts.add("[Binary resource: ${res.uri}]")
+                        }
+                    }
+                    is ContentBlock.ResourceLink -> textParts.add("[Resource: ${block.name} (${block.uri})]")
                 }
             }
             is ToolCallContent.Diff -> {
@@ -79,10 +92,10 @@ private fun extractToolContent(content: List<ToolCallContent>?): ToolContent? {
             is ToolCallContent.Terminal -> textParts.add("Terminal: ${tc.terminalId}")
         }
     }
-    if (textParts.isEmpty()) return null
+    if (textParts.isEmpty() && images.isEmpty()) return null
     val joined = textParts.joinToString("\n")
-    val text = if (joined.length > 2000) joined.take(2000) + "..." else joined
-    return ToolContent(text = text)
+    val text = if (joined.isEmpty()) null else if (joined.length > 2000) joined.take(2000) + "..." else joined
+    return ToolContent(text = text, images = images.ifEmpty { null })
 }
 
 internal fun renderDiffMarkdown(path: String, oldText: String?, newText: String): String {
@@ -355,29 +368,10 @@ private suspend fun handleClientMessage(
             session.broadcast(WsMessage.TurnComplete("cancelled"))
             session.clearTurnBuffer()
         }
-        is WsMessage.Diagnose -> {
-            val diagnosticText = session.buildDiagnosticContext()
-            session.cancelPrompt()
-            withTimeoutOrNull(5000) { session.promptJob?.join() }
-            session.promptJob?.cancel()
-            session.promptJob = null
-            session.activePermission = null
-            session.store.clearToolCalls(session.id)
-            session.store.setPromptStartTime(session.id, 0L)
-            session.store.clearTurnState(session.id)
-            session.broadcast(WsMessage.TurnComplete("cancelled"))
-            session.clearTurnBuffer()
-            session.promptJob = session.scope.launch {
-                handlePrompt(WsMessage.Prompt(diagnosticText), session, debug)
-            }
-        }
         is WsMessage.PermissionResponse -> {
             handlePermissionResponse(wsMsg, session)
             session.activePermission = null
             session.broadcast(wsMsg)
-        }
-        is WsMessage.BrowserStateResponse -> {
-            session.clientOps.completeBrowserState(wsMsg.requestId, wsMsg.state)
         }
         is WsMessage.ChangeAgent -> {
             logger.info("Received ChangeAgent: {}", wsMsg.agentId)
@@ -424,8 +418,9 @@ private suspend fun handlePrompt(
         val fileNames = prompt.files.map { it.name } + prompt.resourceLinks.map { it.name }
         session.broadcast(WsMessage.UserMessage(prompt.text, fileNames = fileNames))
 
-        val events = if (debug && effectivePrompt.text.trim() == "/simulate") {
-            buildSimulationResponse()()
+        val simulateCmd = effectivePrompt.text.trim()
+        val events = if (debug && simulateCmd.startsWith("/simulate")) {
+            buildSimulationResponse(clientOps = session.clientOps, fast = simulateCmd.contains("fast"))()
         } else {
             session.prompt(effectivePrompt.text, effectivePrompt.screenshot, effectivePrompt.files, effectivePrompt.resourceLinks)
         }
@@ -462,6 +457,8 @@ private suspend fun handlePrompt(
                                     session.broadcast(WsMessage.AgentText(msgId = msgId, markdown = content.text, usage = usageStr))
                                     updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
                                 }
+                            } else if (content is ContentBlock.Image) {
+                                session.broadcast(WsMessage.AgentImage(msgId = msgId, data = content.data, mimeType = content.mimeType))
                             }
                         }
                         is SessionUpdate.AgentThoughtChunk -> {
@@ -474,6 +471,8 @@ private suspend fun handlePrompt(
                                     session.broadcast(WsMessage.AgentThought(thoughtId = thoughtId, markdown = content.text, usage = usageStr))
                                     updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
                                 }
+                            } else if (content is ContentBlock.Image) {
+                                session.broadcast(WsMessage.AgentImage(msgId = msgId, data = content.data, mimeType = content.mimeType))
                             }
                         }
                         is SessionUpdate.ToolCall -> {
@@ -500,7 +499,13 @@ private suspend fun handlePrompt(
                                 content = toolContent?.text,
                                 kind = update.kind.toToolKind(),
                                 location = update.locations.firstOrNull()?.path,
+                                images = toolContent?.images,
                             ))
+                            // Promote tool call images to the response area so they're visible
+                            // without expanding the tool call details
+                            toolContent?.images?.forEach { img ->
+                                session.broadcast(WsMessage.AgentImage(msgId = msgId, data = img.data, mimeType = img.mimeType))
+                            }
                             updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
                         }
                         is SessionUpdate.ToolCallUpdate -> {
@@ -537,7 +542,12 @@ private suspend fun handlePrompt(
                                 content = updateContent?.text ?: entry?.content?.ifEmpty { null },
                                 kind = update.kind.toToolKind() ?: entry?.kind,
                                 location = update.locations?.firstOrNull()?.path ?: entry?.location,
+                                images = updateContent?.images,
                             ))
+                            // Promote tool call images to the response area
+                            updateContent?.images?.forEach { img ->
+                                session.broadcast(WsMessage.AgentImage(msgId = msgId, data = img.data, mimeType = img.mimeType))
+                            }
                             updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
                         }
                         is SessionUpdate.UsageUpdate -> {
@@ -555,6 +565,19 @@ private suspend fun handlePrompt(
                             if (thoughtText.isNotBlank()) {
                                 session.broadcast(WsMessage.AgentThought(thoughtId = thoughtId, markdown = "", usage = usageStr))
                             }
+                        }
+                        is SessionUpdate.PlanUpdate -> {
+                            val entries = update.entries.map { entry ->
+                                PlanEntryInfo(
+                                    content = entry.content,
+                                    status = when (entry.status) {
+                                        com.agentclientprotocol.model.PlanEntryStatus.PENDING -> PlanEntryStatus.Pending
+                                        com.agentclientprotocol.model.PlanEntryStatus.IN_PROGRESS -> PlanEntryStatus.InProgress
+                                        com.agentclientprotocol.model.PlanEntryStatus.COMPLETED -> PlanEntryStatus.Completed
+                                    },
+                                )
+                            }
+                            session.broadcast(WsMessage.PlanUpdate(entries))
                         }
                         is SessionUpdate.AvailableCommandsUpdate -> {
                             val commands = update.availableCommands.map { cmd ->

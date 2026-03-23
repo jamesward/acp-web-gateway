@@ -90,6 +90,46 @@ class AgentHolder(
         }
     }
 
+    /**
+     * Start in simulated agent mode using a ReplayableFakeClientSession.
+     * No real agent process is spawned — uses canned simulation data instead.
+     */
+    suspend fun setupSimulatedAgent() {
+        lock.withLock {
+            val oldManager = manager
+            val command = ProcessCommand("fake", emptyList())
+            val mgr = AgentProcessManager(command, workingDir)
+            mgr.agentName = "Simulated Agent"
+            mgr.agentVersion = "1.0.0"
+
+            val clientOps = GatewayClientOperations()
+            val fakeSession = ReplayableFakeClientSession(clientOps)
+            val testScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
+            val session = GatewaySession(
+                id = java.util.UUID.randomUUID(),
+                clientSession = fakeSession,
+                clientOps = clientOps,
+                cwd = workingDir,
+                scope = testScope,
+                store = mgr.store,
+            )
+            session.ready = true
+            session.startEventForwarding()
+            mgr.sessions[session.id] = session
+
+            manager = mgr
+            currentAgent = RegistryAgent(
+                id = "simulate",
+                name = "Simulated Agent",
+                version = "1.0.0",
+            )
+            startupError = null
+
+            oldManager?.close()
+            logger.info("Simulated agent started")
+        }
+    }
+
     fun close() {
         manager?.close()
     }
@@ -272,20 +312,27 @@ fun startDevServer(config: DevServerConfig) {
         agentDisplay, config.port, config.debug, config.dev)
 
     val holder = runBlocking {
-        val registry = fetchRegistry()
-        val h = AgentHolder(registry, System.getProperty("user.dir"))
-        try {
-            if (config.agentCommand != null) {
-                h.switchAgentCommand(parseCommandString(config.agentCommand))
-            } else if (config.agentId != null) {
-                h.switchAgent(config.agentId)
+        if (config.agentId == "simulate") {
+            // Simulated agent mode — no real agent, uses canned responses
+            val h = AgentHolder(emptyList(), System.getProperty("user.dir"))
+            h.setupSimulatedAgent()
+            h
+        } else {
+            val registry = fetchRegistry()
+            val h = AgentHolder(registry, System.getProperty("user.dir"))
+            try {
+                if (config.agentCommand != null) {
+                    h.switchAgentCommand(parseCommandString(config.agentCommand))
+                } else if (config.agentId != null) {
+                    h.switchAgent(config.agentId)
+                }
+            } catch (e: Exception) {
+                val display = config.agentId ?: config.agentCommand ?: "unknown"
+                logger.error("Failed to start agent '{}': {}", display, e.message, e)
+                h.startupError = "Failed to start agent '$display': ${e.message}"
             }
-        } catch (e: Exception) {
-            val display = config.agentId ?: config.agentCommand ?: "unknown"
-            logger.error("Failed to start agent '{}': {}", display, e.message, e)
-            h.startupError = "Failed to start agent '$display': ${e.message}"
+            h
         }
-        h
     }
 
     lateinit var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>

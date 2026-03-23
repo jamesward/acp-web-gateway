@@ -3,13 +3,35 @@ package com.jamesward.acpgateway.shared
 import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.model.*
+import com.agentclientprotocol.model.PlanEntryStatus as AcpPlanEntryStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
 @OptIn(UnstableApi::class)
-fun buildSimulationResponse(): suspend () -> Flow<Event> = {
+fun buildSimulationResponse(clientOps: GatewayClientOperations? = null, fast: Boolean = false): suspend () -> Flow<Event> = {
     flow {
+        // In fast mode, skip delays entirely for quick testing
+        suspend fun pace(ms: Long) { if (!fast) delay(ms) }
+
+        // ── Plan: initial plan with all steps pending ──
+        fun planEntries(vararg statuses: AcpPlanEntryStatus): List<PlanEntry> {
+            val steps = listOf(
+                "Review existing code and understand the structure",
+                "Write example files demonstrating coroutine patterns",
+                "Run tests to verify correctness",
+                "Write a comprehensive summary",
+            )
+            return steps.zip(statuses.toList()) { content, status ->
+                PlanEntry(content = content, priority = PlanEntryPriority.MEDIUM, status = status)
+            }
+        }
+        emit(Event.SessionUpdateEvent(SessionUpdate.PlanUpdate(
+            planEntries(AcpPlanEntryStatus.IN_PROGRESS, AcpPlanEntryStatus.PENDING, AcpPlanEntryStatus.PENDING, AcpPlanEntryStatus.PENDING)
+        )))
+        pace(500)
+
         // ── Phase 1: Extended thinking (30s) ──
         val thinkingChunks = listOf(
             "Let me ",
@@ -29,7 +51,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in thinkingChunks) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text(chunk))))
-            delay(333)
+            pace(333)
         }
 
         // ── Phase 2: Read a file (5s) ──
@@ -56,6 +78,11 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
             used = 12400,
             size = 200000,
             cost = Cost(amount = 0.12, currency = "USD"),
+        )))
+
+        // Plan update: step 1 done, step 2 starting
+        emit(Event.SessionUpdateEvent(SessionUpdate.PlanUpdate(
+            planEntries(AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.IN_PROGRESS, AcpPlanEntryStatus.PENDING, AcpPlanEntryStatus.PENDING)
         )))
 
         // ── Phase 3: First response section — Fundamentals (30s) ──
@@ -90,7 +117,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in fundamentals) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(167)
+            pace(167)
         }
 
         // ── Phase 4: Read build config (5s) ──
@@ -121,7 +148,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in moreThinking) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text(chunk))))
-            delay(250)
+            pace(250)
         }
 
         // ── Phase 5: Suspend functions section (25s) ──
@@ -155,7 +182,7 @@ fun buildSimulationResponse(): suspend () -> Flow<Event> = {
         )
         for (chunk in suspendSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(167)
+            pace(167)
         }
 
         // ── Phase 6: Write a file (8s) ──
@@ -242,7 +269,7 @@ fun main() = runBlocking {
         )
         for (chunk in structuredSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(150)
+            pace(150)
         }
 
         // ── Phase 8: Run command (8s) ──
@@ -302,8 +329,47 @@ fun main() = runBlocking {
         )
         for (chunk in flowSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(167)
+            pace(167)
         }
+
+        // ── Phase 9b: Image content block ──
+        emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(
+            "Here's a visualization of the flow pipeline:\n\n"
+        ))))
+        delay(200)
+        emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Image(
+            data = SIMULATION_IMAGE_PNG,
+            mimeType = "image/png",
+        ))))
+        delay(300)
+        emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(
+            "\n\nAs you can see, data flows through each operator in sequence.\n\n"
+        ))))
+        delay(200)
+
+        // ── Phase 9c: Tool call that returns an image (e.g. agent reads an image file) ──
+        emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
+            toolCallId = ToolCallId("tc-read-img"),
+            title = "Read docs/flow-diagram.png",
+            kind = com.agentclientprotocol.model.ToolKind.READ,
+            status = ToolCallStatus.IN_PROGRESS,
+            locations = listOf(ToolCallLocation("docs/flow-diagram.png")),
+        )))
+        delay(300)
+        emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
+            toolCallId = ToolCallId("tc-read-img"),
+            title = "Read docs/flow-diagram.png",
+            kind = com.agentclientprotocol.model.ToolKind.READ,
+            status = ToolCallStatus.COMPLETED,
+            locations = listOf(ToolCallLocation("docs/flow-diagram.png")),
+            content = listOf(
+                ToolCallContent.Content(ContentBlock.Image(
+                    data = SIMULATION_IMAGE_PNG,
+                    mimeType = "image/png",
+                )),
+            ),
+        )))
+        delay(200)
 
         // ── Phase 10: Write advanced example (8s) ──
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
@@ -388,7 +454,7 @@ fun main() = runBlocking {
         )
         for (chunk in errorSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(133)
+            pace(133)
         }
 
         // ── Phase 12: Read test file (5s) ──
@@ -405,7 +471,7 @@ fun main() = runBlocking {
             title = "Read src/test/kotlin/CoroutineTest.kt",
             status = ToolCallStatus.COMPLETED,
             content = listOf(ToolCallContent.Content(ContentBlock.Text(
-                "class CoroutineTest {\n    @Test\n    fun `concurrent fetch completes in bounded time`() = runTest {\n        val results = processAll((1..100).toList())\n        assertEquals(100, results.size)\n    }\n\n    @Test\n    fun `cancellation propagates to children`() = runTest {\n        val job = launch {\n            repeat(1000) { i ->\n                delay(100)\n                println(\"Working ${'$'}i\")\n            }\n        }\n        delay(350)\n        job.cancel()\n        assertTrue(job.isCancelled)\n    }\n}"
+                "class CoroutineTest {\n    @Test\n    fun `concurrent fetch completes in bounded time`() = runTest {\n        val results = processAll((1..100).toList())\n        assertEquals(100, results.size)\n    }\n\n    @Test\n    fun `cancellation propagates to children`() = runTest {\n        val job = launch {\n            repeat(1000) { i ->\n                pace(100)\n                println(\"Working ${'$'}i\")\n            }\n        }\n        delay(350)\n        job.cancel()\n        assertTrue(job.isCancelled)\n    }\n}"
             ))),
         )))
         delay(333)
@@ -456,7 +522,7 @@ fun main() = runBlocking {
         )
         for (chunk in advancedSection) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(117)
+            pace(117)
         }
 
         // ── Phase 14: Write test file (8s) ──
@@ -484,7 +550,7 @@ class AdvancedCoroutineTest {
         supervisorScope {
             launch {
                 results.add("task1-start")
-                delay(100)
+                pace(100)
                 results.add("task1-done")
             }
             launch {
@@ -493,7 +559,7 @@ class AdvancedCoroutineTest {
             }
             launch {
                 results.add("task3-start")
-                delay(200)
+                pace(200)
                 results.add("task3-done")
             }
         }
@@ -512,7 +578,7 @@ class AdvancedCoroutineTest {
         }
         .buffer(10)
         .collect {
-            delay(10)
+            pace(10)
             collected.add(it)
         }
 
@@ -532,6 +598,11 @@ class AdvancedCoroutineTest {
         )))
         delay(333)
 
+        // Plan update: step 2 done, step 3 starting
+        emit(Event.SessionUpdateEvent(SessionUpdate.PlanUpdate(
+            planEntries(AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.IN_PROGRESS, AcpPlanEntryStatus.PENDING)
+        )))
+
         // ── Phase 15: Run tests (8s) ──
         emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
             toolCallId = ToolCallId("tc-run-2"),
@@ -550,11 +621,68 @@ class AdvancedCoroutineTest {
         )))
         delay(500)
 
+        // Plan update: step 3 done, step 4 starting
+        emit(Event.SessionUpdateEvent(SessionUpdate.PlanUpdate(
+            planEntries(AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.IN_PROGRESS)
+        )))
+
+        // ── Phase 15b: Permission request (simulates agent requesting write permission) ──
+        if (clientOps != null) {
+            emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
+                toolCallId = ToolCallId("tc-perm-write"),
+                title = "Write src/main/kotlin/PermExample.kt",
+                kind = com.agentclientprotocol.model.ToolKind.EDIT,
+                status = ToolCallStatus.IN_PROGRESS,
+                locations = listOf(ToolCallLocation("src/main/kotlin/PermExample.kt")),
+            )))
+            pace(300)
+
+            val permDeferred = CompletableDeferred<RequestPermissionResponse>()
+            clientOps.pendingPermissions.send(PendingPermission(
+                toolCallId = "tc-perm-write",
+                title = "Allow writing to src/main/kotlin/PermExample.kt?",
+                options = listOf(
+                    PermissionOption(
+                        optionId = PermissionOptionId("allow"),
+                        name = "Allow",
+                        kind = PermissionOptionKind.ALLOW_ONCE,
+                    ),
+                    PermissionOption(
+                        optionId = PermissionOptionId("deny"),
+                        name = "Deny",
+                        kind = PermissionOptionKind.REJECT_ONCE,
+                    ),
+                ),
+                deferred = permDeferred,
+                description = "```kotlin\npackage com.example\n\nfun permissionGranted() = println(\"Permission was granted!\")\n```",
+            ))
+
+            // Wait for user to respond to the permission dialog
+            permDeferred.await()
+
+            emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
+                toolCallId = ToolCallId("tc-perm-write"),
+                title = "Write src/main/kotlin/PermExample.kt",
+                status = ToolCallStatus.COMPLETED,
+                content = listOf(ToolCallContent.Diff(
+                    path = "src/main/kotlin/PermExample.kt",
+                    oldText = null,
+                    newText = "package com.example\n\nfun permissionGranted() = println(\"Permission was granted!\")",
+                )),
+            )))
+            pace(300)
+        }
+
         // Final usage update
         emit(Event.SessionUpdateEvent(SessionUpdate.UsageUpdate(
             used = 156000,
             size = 200000,
             cost = Cost(amount = 1.24, currency = "USD"),
+        )))
+
+        // Plan update: all done
+        emit(Event.SessionUpdateEvent(SessionUpdate.PlanUpdate(
+            planEntries(AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.COMPLETED, AcpPlanEntryStatus.COMPLETED)
         )))
 
         // ── Phase 16: Summary section (15s) ──
@@ -589,10 +717,19 @@ class AdvancedCoroutineTest {
         )
         for (chunk in summary) {
             emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text(chunk))))
-            delay(100)
+            pace(100)
         }
 
         // End turn
         emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
     }
 }
+
+// Small 200x60 PNG showing a colored flow pipeline diagram (source → map → filter → collect)
+private const val SIMULATION_IMAGE_PNG =
+    "iVBORw0KGgoAAAANSUhEUgAAAMgAAAA8CAIAAACsOWLGAAABAElEQVR42u3coQ2EQBCGUSrB0BBF" +
+    "UMRpNBp9+jT6NEVQxHawdDCbkOMyIY98BfyZPLWCru8H6ed1TiCwBJbAksASWAJL+ius5VMzFI88" +
+    "lpqhxiXLN0PxyLq/LgcWWGCBBRZYYIEFFlhgPRKWdMtzwzSXDMUjt+nIUOOS+5qheGR5j5cDCyyw" +
+    "wAILLLDAAgsssMACC6w72uIvB6zGxhyw4pFggQUWWGCBBRZYYIEFFlieGzw3gAUWWGCBBRZYYIEF" +
+    "FlhggQUWWGCBBRZYYIEFFlhggQWW5HfcAktgSWAJLIElgSWwBJYElsASWBJYAksP7QRmr3LhjfGW" +
+    "1gAAAABJRU5ErkJggg=="

@@ -491,6 +491,22 @@ class BrowserIntegrationTest {
     }
 
     @Test
+    fun sendButtonNotClippedOnMobile() {
+        // iPhone-sized viewport
+        page.setViewportSize(375, 812)
+        navigateAndWait()
+
+        // iOS Safari auto-zooms when focusing an input with font-size < 16px.
+        // This zoom causes the page to overflow horizontally, clipping the Send button
+        // and other controls on the right side of the input bar.
+        val fontSize = (page.evaluate(
+            "parseFloat(getComputedStyle(document.querySelector('.input-row textarea')).fontSize)"
+        ) as Number).toDouble()
+        assertTrue(fontSize >= 16.0,
+            "Textarea font-size (${fontSize}px) must be >= 16px to prevent iOS Safari auto-zoom that clips the Send button")
+    }
+
+    @Test
     fun imageFileUploadSendsAsImageContentBlock() {
         fakeSession.enqueueTextResponse("Nice image")
 

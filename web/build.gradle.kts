@@ -34,6 +34,7 @@ kotlin {
             implementation("io.ktor:ktor-client-core:3.4.1")
             implementation("io.ktor:ktor-client-js-wasm-js:3.4.1")
             implementation(npm("html2canvas", "1.4.1"))
+            implementation(npm("highlight.js", "11.11.1"))
         }
         wasmJsTest.dependencies {
             implementation(kotlin("test"))

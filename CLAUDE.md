@@ -15,7 +15,7 @@ web/      — Kotlin/WasmJS Kilua composable UI. Pure Compose-style components, 
 ## Key Files
 
 ### shared
-- `Message.kt` — `WsMessage` sealed class (Prompt, AgentText, AgentThought, ToolCall, Connected, TurnComplete, PermissionRequest/Response, Cancel, Diagnose, BrowserStateRequest/Response, AvailableCommands, ChangeAgent, UserMessage, Error) and supporting types (`ToolCallDisplay`, `FileAttachment`, `CommandInfo`, `ChatEntry`). All browser<->server communication uses these serialized as JSON over Kilua RPC or raw WebSocket.
+- `Message.kt` — `WsMessage` sealed class (Prompt, AgentText, AgentThought, ToolCall, Connected, TurnComplete, PermissionRequest/Response, Cancel, AvailableCommands, ChangeAgent, UserMessage, Error) and supporting types (`ToolCallDisplay`, `FileAttachment`, `CommandInfo`, `ChatEntry`). All browser<->server communication uses these serialized as JSON over Kilua RPC or raw WebSocket.
 - `IChatService.kt` — Kilua RPC `@RpcService` interface defining the `chat` channel method.
 - `WebSocketHandler.kt` — Core `handleChatChannels(input, output, session, manager, ...)` function processing ACP events into WsMessages. Thin `handleChatWebSocket()` wrapper for CLI/simulation use.
 
@@ -26,7 +26,7 @@ web/      — Kotlin/WasmJS Kilua composable UI. Pure Compose-style components, 
 - `Registry.kt` — Fetches ACP agent registry, resolves agent distribution (npx/uvx/binary) to a `ProcessCommand`.
 
 ### web
-- `App.kt` — Kilua composable UI. Pure Compose-style components using `mutableStateOf` for reactive state. Kilua RPC `getService<IChatService>().chat {}` for typed WS communication. `@JsFun` bridges for console capture, DOM state collection, scroll management, and file download. Handles `BrowserStateRequest` messages for server-side browser debugging. Kilua form `textArea` with two-way value binding.
+- `App.kt` — Kilua composable UI. Pure Compose-style components using `mutableStateOf` for reactive state. Kilua RPC `getService<IChatService>().chat {}` for typed WS communication. `@JsFun` bridges for scroll management and file download. Kilua form `textArea` with two-way value binding.
 
 ## Build & Run
 
@@ -66,6 +66,32 @@ The server's `processResources` task automatically runs `:web:wasmJsBrowserDevel
 
 **Port conflicts**: The user often runs the gateway server locally on port 8080 while working on this project. If you need to start the server for testing, use a different port via `--port` flag or `PORT` env var: `PORT=8081 ./gradlew :server:run --args="--agent claude-code"`. For compile-only verification (preferred), use the compile commands above instead.
 
+**NEVER run `./gradlew --stop`**: This project is often used to work on itself — the user's main gateway server runs as a Gradle task. Running `./gradlew --stop` kills all Gradle daemons including the user's active server, losing the current task session. If you encounter a stale Gradle daemon issue, use `--no-daemon` for your specific build command instead.
+
+### UI Testing with Simulated Agent
+
+To test UI changes in a real browser without needing a real ACP agent, use the simulated agent mode:
+
+```bash
+# Start dev server with simulated agent on a different port
+PORT=8081 ./gradlew :server:runDev --args="--agent simulate --debug"
+```
+
+This starts the full dev server (Kilua RPC, static assets, etc.) with a `ReplayableFakeClientSession` that returns canned simulation data. The simulation includes text streaming, thinking blocks, tool calls, image content blocks, and other UI scenarios.
+
+**Testing workflow with Chrome DevTools MCP**:
+1. Start the simulated server in the background on a non-conflicting port (e.g., 8081)
+2. Open a new Chrome page and navigate to `http://localhost:<port>/`
+3. Wait for the "Send" button to appear (confirms WASM client loaded and RPC connected)
+4. Type a message and click Send — the simulated agent will respond with canned content
+5. Use `take_screenshot` or `take_snapshot` to verify rendering
+6. **Cleanup when done** (critical — do this BEFORE returning to the user):
+   - Kill the test server: `kill <pid>` (use the PID from the background task, or `lsof -ti:<port> | xargs kill`)
+   - Navigate the Chrome page away from the test URL: `navigate_page` to `about:blank` or close it
+   - If Chrome DevTools MCP still has the test page selected, interactions with the main gateway may fail
+
+**Important**: Do NOT kill port 8080 — that's the user's main server.
+
 ## Architecture Notes
 
 - **Proxy mode** (production): Server is relay-only. Landing page at `/`. Sessions created on demand via CLI connections at `/s/{sessionId}`. No in-process agent.
@@ -73,33 +99,25 @@ The server's `processResources` task automatically runs `:web:wasmJsBrowserDevel
 - **ACP communication**: CLI spawns agent as subprocess, communicates via stdio using the ACP Kotlin SDK's `StdioTransport` → `Protocol` → `Client` → `ClientSession`. CLI relays messages to the proxy server over WebSocket.
 - **Browser communication**: Browser connects via Kilua RPC (typed WebSocket channels). Server sends structured `WsMessage` types (AgentText, AgentThought, ToolCall, etc.). Client renders UI using Kilua composables with reactive state.
 - **Permissions**: Agent requests permissions via `ClientSessionOperations.requestPermissions()` which suspends on a `CompletableDeferred`. Server sends `PermissionRequest` message. Client renders permission dialog as a Kilua composable and sends `PermissionResponse` back via RPC channel.
-- **Debug mode**: `--debug` flag sets `data-debug="true"` on `<body>`, enables Screenshot checkbox, Download Log button, and Diagnose button.
-- **Browser debugging**: When working on the gateway via itself (agent is claude-code), the ACP agent can investigate client-side state and errors. Three mechanisms are available:
-  1. **`browser://` virtual files** — Read browser state via the `Read` tool (routed through ACP's `fsReadTextFile` → `GatewayClientOperations` → `BrowserStateRequest` WsMessage → client-side JS collection → `BrowserStateResponse`):
-     - `browser://console` — Last 50 console log entries (log/warn/error with timestamps). Client installs console interceptors at startup via `installConsoleCapture()`.
-     - `browser://dom` — DOM state summary: message count, viewport size, permission dialog visibility, page title, body classes, URL.
-     - `browser://all` — Both console logs and DOM state combined as JSON.
-  2. **Screenshot checkbox** — Visible in debug mode. User checks "Screenshot" next to Send. Captures a PNG screenshot via `html2canvas` (renders DOM to canvas, extracts base64 PNG). Sent as `ContentBlock.Image` to the agent.
-  3. **Diagnose button** — Visible in debug mode while the agent is working. Cancels the current task, calls `buildDiagnosticContext()` which collects browser state (console + DOM), session state (elapsed time, active tool calls, pending permissions, recent history), and re-sends everything as a diagnostic prompt.
+- **Debug mode**: `--debug` flag sets `data-debug="true"` on `<body>`, enables Screenshot checkbox and Download Log button.
+- **UI debugging with Chrome DevTools MCP**: To debug UI issues, spin up a separate `runDev` server and use Chrome DevTools MCP tools to inspect the UI.
 
-  **How `browser://` reads work end-to-end**:
-  1. Agent calls `fsReadTextFile("browser://console")` via ACP protocol
-  2. `GatewayClientOperations.fsReadTextFile()` intercepts the `browser://` prefix
-  3. Creates a `CompletableDeferred` and sends `BrowserStateRequestInternal` to a channel
-  4. `GatewaySession.startEventForwarding()` picks it up, sends `WsMessage.BrowserStateRequest` to the first connected client
-  5. Client's `onMessage` handler calls `collectBrowserState()` which invokes JS functions (`getConsoleLogs()`, `getDomState()`)
-  6. Client sends back `WsMessage.BrowserStateResponse` with collected JSON
-  7. Server completes the deferred, `fsReadTextFile` returns the state as file content
-  8. Times out after 10 seconds if the browser doesn't respond
+  **Debugging workflow**:
+  1. Determine the current agent — check the main UI page header (port 8080) with `take_snapshot` or `list_pages` to see which agent is active (e.g. `claude-acp`, `github-copilot-cli`)
+  2. Start a dev server with the **same agent** on a different port: `PORT=8081 ./gradlew --no-daemon :server:runDev --args="--agent <agent-id> --debug"`
+     - Use `--agent simulate` instead if you only need to test UI rendering without a real agent (faster, no API costs)
+  3. Open a Chrome page with `new_page` to the test URL (e.g. `http://localhost:8081`)
+  4. Wait for `Send` button to confirm WASM client loaded
+  5. Use `take_snapshot` to inspect the a11y tree / DOM state
+  6. Use `take_screenshot` to check visual rendering
+  7. Interact with the UI using `fill`, `click`, `type_text` etc.
+  8. **Cleanup when done** (critical):
+     - Kill the test server: find PID via `ss -tlnp | grep <port>` then `kill <pid>`
+     - Navigate the Chrome page to `about:blank` so it doesn't interfere with the main UI
 
-  **When to use which**: If you suspect a client-side issue, read `browser://console` directly to check for JS errors. For visual issues, ask the user to check the Screenshot box. For stuck-task issues, the user can click Diagnose.
+  **`/simulate` command** (debug mode only): Type `/simulate` as a prompt to trigger a canned simulation response with thinking, tool calls, images, permission requests, and text streaming. Use `/simulate fast` to skip all delays and get the full response instantly — useful for quickly verifying UI rendering without waiting. The `--agent simulate` startup mode always uses slow (realistic) timing for user-facing demos.
 
-  **IMPORTANT — Always debug UI issues before guessing at fixes**: When any UI behavior is wrong (elements not appearing, wrong content, layout issues, interactions broken), you MUST investigate client-side state before making code changes:
-  1. **First**: Read `browser://console` to check for JavaScript errors. JS errors in the WASM client can silently break rendering.
-  2. **Second**: Read `browser://dom` to check DOM state (message count, permission dialog visibility, etc.).
-  3. **Third**: Ask the user to send a Screenshot if the issue is visual (layout, styling, missing elements).
-  4. **If `browser://` reads fail or time out**: The reads only work when the agent's file reads are routed through ACP's `fsReadTextFile`. If they return "File does not exist" or time out, ask the user to open browser DevTools (F12) and paste console errors directly.
-  5. **If a permission dialog blocks the read**: The reads may trigger an ACP permission prompt. If the browser is unresponsive, this creates a deadlock. Ask the user to refresh and share console output manually.
+  **Important**: Do NOT kill port 8080 — that's the user's main server.
 
   **Do NOT** skip debugging and jump to speculative code fixes for UI issues. Verify which layer has the bug (server-side message flow vs client-side Kilua composable rendering) before changing code.
 
@@ -109,7 +127,7 @@ The server's `processResources` task automatically runs `:web:wasmJsBrowserDevel
 
 When unexpected UI behavior is reported, follow this process strictly:
 
-1. **Reproduce** — Understand the exact symptom. Use `browser://console`, `browser://dom`, screenshots, or ask the user to paste DevTools console output.
+1. **Reproduce** — Understand the exact symptom. Use the simulated agent + Chrome DevTools MCP to inspect the UI, or ask the user to paste DevTools console output.
 2. **Write a failing test** — Write a test that reproduces the bug. Choose the lightest test layer that can capture the issue:
    - Fragment output wrong? → FragmentsTest (shared module, milliseconds).
    - Wrong HtmlUpdate sequence/targets/swap modes? → RenderingFlowTest (server module, seconds).
@@ -144,7 +162,7 @@ Do NOT fix UI bugs without a test. If you can't write a test first, explain why 
 - Events: `onClick`, `onInput`, `onKeydown`, `onEvent<EventType>("eventname")` — all composable.
 - Kilua RPC: `getService<IChatService>().chat { sendChannel, receiveChannel -> ... }` for typed WebSocket channels.
 - `setRpcUrlPrefix(prefix)` must be called before connecting in proxy mode to route to the correct session path.
-- `@JsFun` bridges for: relay WS, `setRpcUrlPrefix`, console capture (`installConsoleCapture`, `getConsoleLogs`), DOM state (`getDomState`), scroll management (`isMessagesAtBottom`, `scrollMessagesToBottom`, `installScrollListener`, `readScrollAtBottom`), and file download (`downloadTextFile`).
+- `@JsFun` bridges for: relay WS, `setRpcUrlPrefix`, scroll management (`isMessagesAtBottom`, `scrollMessagesToBottom`, `installScrollListener`, `readScrollAtBottom`), and file download (`downloadTextFile`).
 
 ### Kotlin/Wasm (web module)
 - Requires `@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)`.

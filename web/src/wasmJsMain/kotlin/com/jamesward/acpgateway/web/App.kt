@@ -47,6 +47,7 @@ class App : Application() {
     /** Triple(msgId, accumulatedMarkdown, usage) for current response. */
     private var currentResponse by mutableStateOf<Triple<String, String, String>?>(null)
     private var currentToolCalls by mutableStateOf(listOf<ToolCallState>())
+    private var currentPlan by mutableStateOf<List<PlanEntryInfo>?>(null)
 
     // Permission state
     private var permissionRequest by mutableStateOf<WsMessage.PermissionRequest?>(null)
@@ -105,7 +106,7 @@ class App : Application() {
 
     override fun start() {
         installTheme()
-        installConsoleCapture()
+        initHighlightJs()
         val body = document.body
         debugMode = body.hasAttribute("data-debug")
         devMode = body.hasAttribute("data-dev")
@@ -118,7 +119,8 @@ class App : Application() {
     // ---- RPC Connection ----
 
     private fun connect() {
-        setRpcUrlPrefix(location.pathname.trimEnd('/'))
+        val prefix = location.pathname.trimEnd('/')
+        if (prefix.isNotEmpty()) setRpcUrlPrefix(prefix)
 
         scope.launch {
             while (true) {
@@ -170,8 +172,10 @@ class App : Application() {
     private fun extractSeq(msg: WsMessage): Long = when (msg) {
         is WsMessage.Connected -> msg.seq
         is WsMessage.AgentText -> msg.seq
+        is WsMessage.AgentImage -> msg.seq
         is WsMessage.AgentThought -> msg.seq
         is WsMessage.ToolCall -> msg.seq
+        is WsMessage.PlanUpdate -> msg.seq
         is WsMessage.TurnComplete -> msg.seq
         is WsMessage.UserMessage -> msg.seq
         is WsMessage.Error -> msg.seq
@@ -200,6 +204,7 @@ class App : Application() {
                     currentThought = null
                     currentResponse = null
                     currentToolCalls = emptyList()
+                    currentPlan = null
                 }
                 stopStatusTimer()
                 agentWorking = msg.agentWorking
@@ -214,6 +219,16 @@ class App : Application() {
                     currentResponse = Triple(msg.msgId, existing.second + msg.markdown, msg.usage ?: existing.third)
                 } else {
                     currentResponse = Triple(msg.msgId, msg.markdown, msg.usage ?: "")
+                }
+            }
+            is WsMessage.AgentImage -> {
+                // Append image inline into the current response content
+                val imgTag = "<img src=\"data:${msg.mimeType};base64,${msg.data}\" alt=\"Agent image\" class=\"agent-image\">"
+                val existing = currentResponse
+                if (existing != null) {
+                    currentResponse = Triple(existing.first, existing.second + "\n\n" + imgTag, existing.third)
+                } else {
+                    currentResponse = Triple(msg.msgId, imgTag, "")
                 }
             }
             is WsMessage.AgentThought -> {
@@ -234,12 +249,16 @@ class App : Application() {
                     contentHtml = msg.contentHtml ?: existing?.contentHtml,
                     kind = msg.kind ?: existing?.kind,
                     location = msg.location ?: existing?.location,
+                    images = msg.images ?: existing?.images,
                 )
                 currentToolCalls = if (existing != null) {
                     currentToolCalls.map { if (it.id == msg.toolCallId) tc else it }
                 } else {
                     currentToolCalls + tc
                 }
+            }
+            is WsMessage.PlanUpdate -> {
+                currentPlan = msg.entries
             }
             is WsMessage.PermissionRequest -> {
                 permissionRequest = msg
@@ -250,6 +269,9 @@ class App : Application() {
             is WsMessage.TurnComplete -> {
                 val newMessages = mutableListOf<ChatMessage>()
                 newMessages.addAll(messages)
+                currentPlan?.let { entries ->
+                    newMessages.add(ChatMessage.Plan(entries))
+                }
                 currentThought?.let { (_, html, usage) ->
                     newMessages.add(ChatMessage.Thought(html, usage.ifEmpty { null }, elapsedSeconds = elapsedSeconds))
                 }
@@ -263,8 +285,10 @@ class App : Application() {
                 currentThought = null
                 currentResponse = null
                 currentToolCalls = emptyList()
+                currentPlan = null
                 stopStatusTimer()
                 agentWorking = false
+                focusPromptInput()
             }
             is WsMessage.Error -> {
                 messages = messages + ChatMessage.Error(msg.message)
@@ -285,10 +309,6 @@ class App : Application() {
             is WsMessage.FileListResponse -> {
                 fileAutocompleteResults = msg.files
                 if (msg.files.isEmpty()) dismissFileAutocomplete()
-            }
-            is WsMessage.BrowserStateRequest -> {
-                val state = collectBrowserState(msg.query)
-                sendWs(WsMessage.BrowserStateResponse(msg.requestId, state))
             }
             else -> {}
         }
@@ -372,6 +392,7 @@ class App : Application() {
                     currentThought = null
                     currentResponse = null
                     currentToolCalls = listOf()
+                    currentPlan = null
                     permissionRequest = null
                     agentWorking = false
                     showAgentSelector = false
@@ -396,11 +417,14 @@ class App : Application() {
                         is ChatMessage.Assistant -> assistantMessageView(msg.markdown, msg.usage, expanded)
                         is ChatMessage.Thought -> thoughtMessageView(msg.markdown, msg.usage, elapsedSeconds = msg.elapsedSeconds, expanded = expanded)
                         is ChatMessage.ToolBlock -> toolBlockView(msg.tools)
+                        is ChatMessage.Plan -> planView(msg.entries)
+                        is ChatMessage.Image -> imageMessageView(msg.data, msg.mimeType)
                         is ChatMessage.Error -> errorMessageView(msg.message)
                     }
                 }
             }
             // Current turn in-progress
+            currentPlan?.let { entries -> planView(entries) }
             currentThought?.let { (_, html, usage) ->
                 thoughtMessageView(html, usage.ifEmpty { null }, showTimer = true, elapsedSeconds = elapsedSeconds)
             }
@@ -434,6 +458,15 @@ class App : Application() {
                     scrollMessagesToBottom()
                     atBottom = true
                 }
+            }
+        }
+
+        // Permission bar (above input, non-blocking so user can see conversation)
+        val perm = permissionRequest
+        if (perm != null) {
+            permissionDialog(perm) { toolCallId, optionId ->
+                sendWs(WsMessage.PermissionResponse(toolCallId, optionId))
+                permissionRequest = null
             }
         }
 
@@ -537,19 +570,10 @@ class App : Application() {
             },
             onDropFiles = { files -> readAndAddFiles(files) },
             onPaste = { e -> handlePasteFiles(e) },
-            onDiagnose = { sendWs(WsMessage.Diagnose) },
             onScreenshotToggle = { screenshotEnabled = !screenshotEnabled },
             onDownloadLog = { downloadChatLog() },
         )
 
-        // Permission dialog
-        val perm = permissionRequest
-        if (perm != null) {
-            permissionDialog(perm) { toolCallId, optionId ->
-                sendWs(WsMessage.PermissionResponse(toolCallId, optionId))
-                permissionRequest = null
-            }
-        }
     }
 
     // ---- Paste file handling ----
@@ -704,6 +728,23 @@ class App : Application() {
                         }
                         sb.appendLine()
                     }
+                    is ChatMessage.Image -> {
+                        sb.appendLine("## Image")
+                        sb.appendLine("[${msg.mimeType} image]")
+                        sb.appendLine()
+                    }
+                    is ChatMessage.Plan -> {
+                        sb.appendLine("## Plan")
+                        for (entry in msg.entries) {
+                            val check = when (entry.status) {
+                                PlanEntryStatus.Completed -> "[x]"
+                                PlanEntryStatus.InProgress -> "[-]"
+                                PlanEntryStatus.Pending -> "[ ]"
+                            }
+                            sb.appendLine("- $check ${entry.content}")
+                        }
+                        sb.appendLine()
+                    }
                     is ChatMessage.Error -> {
                         sb.appendLine("## Error")
                         sb.appendLine(msg.message)
@@ -730,27 +771,34 @@ class App : Application() {
         downloadTextFile("chat-log.md", sb.toString())
     }
 
-    private fun sendPrompt() {
-        val text = promptText.trim()
-        if (text.isEmpty() && pendingFiles.isEmpty()) return
-
-        val files = pendingFiles.toList()
-        val resourceLinks = pendingResourceLinks.toList()
+    private fun beginNewTurn() {
         collapseBeforeIndex = messages.size
         promptText = ""
         pendingFiles = emptyList()
         pendingResourceLinks = emptyList()
         agentWorking = true
         startStatusTimer()
+    }
+
+    private fun sendPrompt() {
+        val text = promptText.trim()
+        if (text.isEmpty() && pendingFiles.isEmpty()) return
+
+        val files = pendingFiles.toList()
+        val resourceLinks = pendingResourceLinks.toList()
 
         if (screenshotEnabled) {
+            // Capture screenshot BEFORE collapsing previous turn blocks,
+            // so the screenshot reflects what the user currently sees.
             scope.launch {
                 val canvasElement = html2canvas(document.documentElement).await<HTMLCanvasElement>()
                 val base64 = canvasElement.toDataURL("image/png").split(',')[1]
                 val screenshot = base64.ifEmpty { throw Exception("Screenshot failed") }
+                beginNewTurn()
                 sendWs(WsMessage.Prompt(text, screenshot = screenshot, files = files, resourceLinks = resourceLinks))
             }
         } else {
+            beginNewTurn()
             sendWs(WsMessage.Prompt(text, files = files, resourceLinks = resourceLinks))
         }
     }

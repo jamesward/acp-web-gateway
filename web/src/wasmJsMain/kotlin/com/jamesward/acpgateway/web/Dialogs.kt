@@ -64,18 +64,23 @@ fun IComponent.switchingAgentModal(name: String) {
 
 @Composable
 fun IComponent.permissionDialog(perm: WsMessage.PermissionRequest, onRespond: (toolCallId: String, optionId: String) -> Unit) {
-    div(className = "permission-overlay") {
-        div(className = "permission-dialog") {
-            h3 { +"Permission Required" }
-            p { +perm.title }
-            div(className = "perm-actions") {
-                for (opt in perm.options) {
-                    button(opt.name) {
-                        onClick {
-                            onRespond(perm.toolCallId, opt.optionId)
-                        }
+    div(className = "permission-bar") {
+        div(className = "perm-title") {
+            h3 { +perm.title }
+        }
+        div(className = "perm-actions") {
+            for (opt in perm.options) {
+                button(opt.name) {
+                    onClick {
+                        onRespond(perm.toolCallId, opt.optionId)
                     }
                 }
+            }
+        }
+        val desc = perm.description
+        if (desc != null) {
+            div(className = "perm-description") {
+                rawHtml(renderMarkdown(desc))
             }
         }
     }

@@ -887,6 +887,203 @@ class RenderingFlowTest {
         handler2.cancel()
     }
 
+    // ---- Image content blocks ----
+
+    @Test
+    fun imageContentBlockSendsAgentImageMessage() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Image(
+                    data = "iVBORw0KGgoAAAANSUhEUg==",
+                    mimeType = "image/png",
+                ))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("show me an image"))
+
+        val messages = output.collectUntilTurnComplete()
+
+        val images = messages.filterIsInstance<WsMessage.AgentImage>()
+        assertEquals(1, images.size, "Should have 1 AgentImage message")
+        assertEquals("iVBORw0KGgoAAAANSUhEUg==", images[0].data)
+        assertEquals("image/png", images[0].mimeType)
+        assertTrue(images[0].msgId.startsWith("msg-"))
+    }
+
+    @Test
+    fun mixedTextAndImageContentBlocks() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("Here is an image:"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Image(
+                    data = "base64data",
+                    mimeType = "image/jpeg",
+                ))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("And some text after."))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("test"))
+
+        val messages = output.collectUntilTurnComplete()
+
+        val texts = messages.filterIsInstance<WsMessage.AgentText>()
+        val images = messages.filterIsInstance<WsMessage.AgentImage>()
+
+        assertEquals(2, texts.size, "Should have 2 AgentText messages")
+        assertEquals(1, images.size, "Should have 1 AgentImage message")
+        assertEquals("Here is an image:", texts[0].markdown)
+        assertEquals("And some text after.", texts[1].markdown)
+        assertEquals("base64data", images[0].data)
+        assertEquals("image/jpeg", images[0].mimeType)
+
+        // Verify ordering: text, image, text, turnComplete
+        val ordered = messages.filter { it is WsMessage.AgentText || it is WsMessage.AgentImage || it is WsMessage.TurnComplete }
+        assertIs<WsMessage.UserMessage>(messages[0])
+        assertIs<WsMessage.AgentText>(ordered[0])
+        assertIs<WsMessage.AgentImage>(ordered[1])
+        assertIs<WsMessage.AgentText>(ordered[2])
+        assertIs<WsMessage.TurnComplete>(ordered[3])
+    }
+
+    // ---- Thought with image ----
+
+    @Test
+    fun thoughtWithImageBroadcastsAgentImage() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Text("Let me think about this image:"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentThoughtChunk(ContentBlock.Image(
+                    data = "thoughtImageBase64",
+                    mimeType = "image/png",
+                ))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("Here is my analysis."))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("analyze this"))
+
+        val messages = output.collectUntilTurnComplete()
+
+        val thoughts = messages.filterIsInstance<WsMessage.AgentThought>()
+        assertTrue(thoughts.isNotEmpty(), "Should have thought messages")
+
+        val images = messages.filterIsInstance<WsMessage.AgentImage>()
+        assertEquals(1, images.size, "Should have 1 AgentImage from thought")
+        assertEquals("thoughtImageBase64", images[0].data)
+        assertEquals("image/png", images[0].mimeType)
+    }
+
+    // ---- Tool call content with images ----
+
+    @Test
+    fun toolCallWithImageContentPassesImageThrough() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
+                    toolCallId = ToolCallId("tc-read-img"),
+                    title = "Read docs/architecture.png",
+                    kind = com.agentclientprotocol.model.ToolKind.READ,
+                    status = ToolCallStatus.IN_PROGRESS,
+                    locations = listOf(ToolCallLocation("docs/architecture.png")),
+                )))
+                emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
+                    toolCallId = ToolCallId("tc-read-img"),
+                    title = "Read docs/architecture.png",
+                    kind = com.agentclientprotocol.model.ToolKind.READ,
+                    status = ToolCallStatus.COMPLETED,
+                    locations = listOf(ToolCallLocation("docs/architecture.png")),
+                    content = listOf(
+                        ToolCallContent.Content(ContentBlock.Image(
+                            data = "iVBORw0KGgoAAAANSUhEUg==",
+                            mimeType = "image/png",
+                        )),
+                    ),
+                )))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("Here is the architecture diagram."))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("show me architecture.png"))
+
+        val messages = output.collectUntilTurnComplete()
+
+        // Tool call should have images
+        val toolCalls = messages.filterIsInstance<WsMessage.ToolCall>()
+        val completed = toolCalls.last { it.status == ToolStatus.Completed }
+        assertNotNull(completed.images, "Completed tool call should have images")
+        assertEquals(1, completed.images!!.size, "Should have 1 image")
+        assertEquals("iVBORw0KGgoAAAANSUhEUg==", completed.images!![0].data)
+        assertEquals("image/png", completed.images!![0].mimeType)
+
+        // Image should also be promoted to the response area as AgentImage
+        val agentImages = messages.filterIsInstance<WsMessage.AgentImage>()
+        assertEquals(1, agentImages.size, "Tool call image should be promoted to AgentImage")
+        assertEquals("iVBORw0KGgoAAAANSUhEUg==", agentImages[0].data)
+        assertEquals("image/png", agentImages[0].mimeType)
+    }
+
+    @Test
+    fun toolCallWithMixedTextAndImageContent() = testChannels { input, output, fakeSession ->
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.ToolCall(
+                    toolCallId = ToolCallId("tc-mixed"),
+                    title = "Read mixed content",
+                    status = ToolCallStatus.IN_PROGRESS,
+                )))
+                emit(Event.SessionUpdateEvent(SessionUpdate.ToolCallUpdate(
+                    toolCallId = ToolCallId("tc-mixed"),
+                    title = "Read mixed content",
+                    status = ToolCallStatus.COMPLETED,
+                    content = listOf(
+                        ToolCallContent.Content(ContentBlock.Text("Some text result")),
+                        ToolCallContent.Content(ContentBlock.Image(
+                            data = "base64imagedata",
+                            mimeType = "image/jpeg",
+                        )),
+                    ),
+                )))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        output.receive() // Connected
+
+        input.send(WsMessage.Prompt("test"))
+
+        val messages = output.collectUntilTurnComplete()
+
+        val toolCalls = messages.filterIsInstance<WsMessage.ToolCall>()
+        val completed = toolCalls.last { it.status == ToolStatus.Completed }
+
+        // Should have both text and image content
+        assertNotNull(completed.content, "Should have text content")
+        assertTrue(completed.content!!.contains("Some text result"))
+        assertNotNull(completed.images, "Should have images")
+        assertEquals(1, completed.images!!.size)
+        assertEquals("base64imagedata", completed.images!![0].data)
+
+        // Image should also be promoted to the response area
+        val agentImages = messages.filterIsInstance<WsMessage.AgentImage>()
+        assertEquals(1, agentImages.size, "Tool call image should be promoted to AgentImage")
+        assertEquals("base64imagedata", agentImages[0].data)
+        assertEquals("image/jpeg", agentImages[0].mimeType)
+    }
+
     @Test
     fun turnBufferClearedAfterTurnComplete() = testChannels { input, output, fakeSession ->
         fakeSession.enqueueTextResponse("Hello")
@@ -901,5 +1098,52 @@ class RenderingFlowTest {
         // A new client connecting with ResumeFrom should get full replay, not buffer
         // (We can verify this indirectly by checking session.getTurnBufferSince returns empty)
         // The buffer is cleared in handlePrompt after TurnComplete is broadcast
+    }
+
+    @Test
+    fun permissionRequestIncludesDescription() = runTest {
+        val command = ProcessCommand("echo", listOf("test"))
+        val manager = AgentProcessManager(command, System.getProperty("user.dir"))
+        val clientOps = GatewayClientOperations()
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val testStore = InMemorySessionStore()
+        val fakeSession = ControllableFakeClientSession()
+        val session = GatewaySession(
+            id = java.util.UUID.randomUUID(),
+            clientSession = fakeSession,
+            clientOps = clientOps,
+            cwd = System.getProperty("user.dir"),
+            scope = testScope,
+            store = testStore,
+        )
+        session.ready = true
+        session.startEventForwarding()
+
+        val outputChannel = Channel<WsMessage>(Channel.UNLIMITED)
+        session.connections.add(outputChannel)
+
+        // Send a permission request with description
+        val deferred = kotlinx.coroutines.CompletableDeferred<com.agentclientprotocol.model.RequestPermissionResponse>()
+        clientOps.pendingPermissions.send(PendingPermission(
+            toolCallId = "tc-plan",
+            title = "Ready to code?",
+            options = listOf(
+                com.agentclientprotocol.model.PermissionOption(
+                    optionId = com.agentclientprotocol.model.PermissionOptionId("approve"),
+                    name = "Yes",
+                    kind = com.agentclientprotocol.model.PermissionOptionKind.ALLOW_ONCE,
+                ),
+            ),
+            deferred = deferred,
+            description = "## Plan\n\n1. Step one\n2. Step two",
+        ))
+
+        // Receive the permission message from the output channel
+        val permMsg = outputChannel.receive()
+        assertIs<WsMessage.PermissionRequest>(permMsg)
+        assertEquals("Ready to code?", permMsg.title)
+        assertEquals("## Plan\n\n1. Step one\n2. Step two", permMsg.description)
+        assertEquals(1, permMsg.options.size)
+        assertEquals("Yes", permMsg.options[0].name)
     }
 }

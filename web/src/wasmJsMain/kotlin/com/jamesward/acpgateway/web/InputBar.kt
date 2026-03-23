@@ -31,7 +31,6 @@ fun IComponent.inputBar(
     onKeydown: (KeyboardEvent) -> Unit,
     onDropFiles: (web.file.FileList) -> Unit,
     onPaste: (web.clipboard.ClipboardEvent) -> Unit,
-    onDiagnose: () -> Unit,
     onScreenshotToggle: () -> Unit,
     onDownloadLog: () -> Unit,
 ) {
@@ -114,6 +113,7 @@ fun IComponent.inputBar(
                     placeholder = "Send a message...",
                     disabled = if (agentWorking) true else null,
                 ) {
+                    id("prompt-input")
                     onInput {
                         onPromptInput(this.value ?: "")
                     }
@@ -136,14 +136,7 @@ fun IComponent.inputBar(
                                 className("btn-cancel")
                                 type(ButtonType.Submit)
                             }
-                            if (debugMode) {
-                                button("Diagnose") {
-                                    className("btn-diagnose")
-                                    type(ButtonType.Button)
-                                    onClick { onDiagnose() }
-                                }
-                            }
-                        } else {
+                            } else {
                             button("Send") {
                                 className("btn-send")
                                 type(ButtonType.Submit)
