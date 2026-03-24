@@ -133,6 +133,16 @@ sealed class WsMessage {
     @SerialName("plan_update")
     data class PlanUpdate(val entries: List<PlanEntryInfo>, val seq: Long = 0) : WsMessage()
 
+    /** Server → client: current agent mode changed. */
+    @Serializable
+    @SerialName("current_mode")
+    data class CurrentMode(val modeId: String, val modeName: String) : WsMessage()
+
+    /** Server → client: session info updated (e.g., title). */
+    @Serializable
+    @SerialName("session_info")
+    data class SessionInfo(val title: String? = null) : WsMessage()
+
     /** Client → server: resume from a given sequence number on reconnect. */
     @Serializable
     @SerialName("resume_from")

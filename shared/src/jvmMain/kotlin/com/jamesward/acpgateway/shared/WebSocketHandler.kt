@@ -218,6 +218,13 @@ suspend fun handleChatChannels(
             output.send(WsMessage.AvailableAgents(availableAgents, currentAgentId))
         }
 
+        // Send current mode if agent supports modes
+        val currentModeId = session.getCurrentModeId()
+        if (currentModeId != null) {
+            val modeName = session.getModeName(currentModeId) ?: currentModeId
+            output.send(WsMessage.CurrentMode(modeId = currentModeId, modeName = modeName))
+        }
+
         // Send available commands (internal + agent-provided)
         if (session.allCommands.isNotEmpty()) {
             output.send(WsMessage.AvailableCommands(session.allCommands))
@@ -429,7 +436,15 @@ private suspend fun handleClientMessage(
         is WsMessage.ResumeFrom -> {
             logger.debug("Ignoring ResumeFrom mid-session: lastSeq={}", wsMsg.lastSeq)
         }
-        else -> logger.warn("Unexpected message from browser: {}", wsMsg)
+        // Server→client messages should not arrive from the browser
+        is WsMessage.Connected, is WsMessage.AgentText, is WsMessage.AgentImage,
+        is WsMessage.AgentThought, is WsMessage.ToolCall, is WsMessage.PermissionRequest,
+        is WsMessage.TurnComplete, is WsMessage.Error, is WsMessage.UserMessage,
+        is WsMessage.AvailableCommands, is WsMessage.AvailableAgents,
+        is WsMessage.FileListResponse, is WsMessage.PlanUpdate,
+        is WsMessage.CurrentMode, is WsMessage.SessionInfo -> {
+            logger.warn("Unexpected server→client message from browser: {}", wsMsg::class.simpleName)
+        }
     }
 }
 
@@ -654,7 +669,26 @@ private suspend fun handlePrompt(
                             session.availableCommands = commands
                             session.broadcast(WsMessage.AvailableCommands(session.allCommands))
                         }
-                        else -> logger.debug("Unhandled session update: {}", update)
+                        is SessionUpdate.UserMessageChunk -> {
+                            // Server already sends WsMessage.UserMessage at prompt start;
+                            // streamed echo-back from the agent is redundant
+                        }
+                        is SessionUpdate.CurrentModeUpdate -> {
+                            val modeId = update.currentModeId.value
+                            val modeName = session.getModeName(modeId) ?: modeId
+                            session.broadcast(WsMessage.CurrentMode(modeId = modeId, modeName = modeName))
+                        }
+                        is SessionUpdate.ConfigOptionUpdate -> {
+                            logger.info("Config options updated: {} options", update.configOptions.size)
+                        }
+                        is SessionUpdate.SessionInfoUpdate -> {
+                            if (update.title != null) {
+                                session.broadcast(WsMessage.SessionInfo(title = update.title))
+                            }
+                        }
+                        is SessionUpdate.UnknownSessionUpdate -> {
+                            logger.debug("Unknown session update type: {}", update.sessionUpdateType)
+                        }
                     }
                 }
                 is Event.PromptResponseEvent -> {

@@ -344,7 +344,16 @@ class AgentIntegrationTest {
                             gotTurnComplete = true
                             break
                         }
-                        else -> {}
+                        // Other message types are expected but not relevant to this test
+                        is WsMessage.AgentImage, is WsMessage.AgentThought,
+                        is WsMessage.PlanUpdate, is WsMessage.Connected,
+                        is WsMessage.Error, is WsMessage.UserMessage,
+                        is WsMessage.AvailableCommands, is WsMessage.AvailableAgents,
+                        is WsMessage.FileListResponse, is WsMessage.PermissionRequest,
+                        is WsMessage.CurrentMode, is WsMessage.SessionInfo,
+                        is WsMessage.Prompt, is WsMessage.Cancel,
+                        is WsMessage.PermissionResponse, is WsMessage.ChangeAgent,
+                        is WsMessage.FileListRequest, is WsMessage.ResumeFrom -> {}
                     }
                 }
                 assertTrue(gotTurnComplete, "Should receive TurnComplete")

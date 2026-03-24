@@ -1243,4 +1243,46 @@ class RenderingFlowTest {
         assertEquals(1, permMsg.options.size)
         assertEquals("Yes", permMsg.options[0].name)
     }
+
+    // ---- Mode and session info forwarding ----
+
+    @Test
+    fun currentModeUpdateIsForwardedAsCurrentModeMessage() = testChannels { input, output, fakeSession ->
+        output.receive() // Connected
+
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.CurrentModeUpdate(SessionModeId("code"))))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("hello"))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+        input.send(WsMessage.Prompt("test"))
+        val messages = output.collectUntilTurnComplete()
+
+        val modeMsgs = messages.filterIsInstance<WsMessage.CurrentMode>()
+        assertEquals(1, modeMsgs.size)
+        assertEquals("code", modeMsgs[0].modeId)
+        // No availableModes configured in fake, so modeName falls back to modeId
+        assertEquals("code", modeMsgs[0].modeName)
+    }
+
+    @Test
+    fun sessionInfoUpdateIsForwardedAsSessionInfoMessage() = testChannels { input, output, fakeSession ->
+        output.receive() // Connected
+
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.SessionInfoUpdate(title = "My Task")))
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("done"))))
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+        input.send(WsMessage.Prompt("test"))
+        val messages = output.collectUntilTurnComplete()
+
+        val infoMsgs = messages.filterIsInstance<WsMessage.SessionInfo>()
+        assertEquals(1, infoMsgs.size)
+        assertEquals("My Task", infoMsgs[0].title)
+    }
 }

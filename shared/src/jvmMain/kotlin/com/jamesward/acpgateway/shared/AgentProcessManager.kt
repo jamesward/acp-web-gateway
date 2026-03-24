@@ -79,6 +79,14 @@ class GatewaySession(
     /** All commands: internal + agent-provided. */
     val allCommands: List<CommandInfo> get() = internalCommands + availableCommands
 
+    /** Resolve a mode ID to its human-readable name, or return null. */
+    fun getModeName(modeId: String): String? =
+        clientSession.availableModes.find { it.id.value == modeId }?.name
+
+    /** Get the current mode ID if modes are supported, or null. */
+    fun getCurrentModeId(): String? =
+        if (clientSession.modesSupported) clientSession.currentMode.value.value else null
+
     /** Optional listener invoked on each broadcast for capturing simulation data. */
     @Volatile
     var captureListener: ((WsMessage) -> Unit)? = null
@@ -158,7 +166,28 @@ class GatewaySession(
                     availableCommands = commands
                     broadcast(WsMessage.AvailableCommands(allCommands))
                 }
-                else -> {}
+                is SessionUpdate.CurrentModeUpdate -> {
+                    val modeId = notification.currentModeId.value
+                    val modeName = getModeName(modeId) ?: modeId
+                    broadcast(WsMessage.CurrentMode(modeId = modeId, modeName = modeName))
+                }
+                is SessionUpdate.SessionInfoUpdate -> {
+                    if (notification.title != null) {
+                        broadcast(WsMessage.SessionInfo(title = notification.title))
+                    }
+                }
+                is SessionUpdate.ConfigOptionUpdate,
+                is SessionUpdate.UsageUpdate,
+                is SessionUpdate.UnknownSessionUpdate -> {
+                    logger.info("Ignoring unhandled notification: ${notification::class.simpleName}")
+                }
+                // These are prompt-flow events, not notifications — should not arrive here
+                is SessionUpdate.AgentMessageChunk, is SessionUpdate.AgentThoughtChunk,
+                is SessionUpdate.UserMessageChunk,
+                is SessionUpdate.ToolCall, is SessionUpdate.ToolCallUpdate,
+                is SessionUpdate.PlanUpdate -> {
+                    logger.info("Unexpected prompt-flow event in notification handler: ${notification::class.simpleName}")
+                }
             }
         }
 

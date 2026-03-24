@@ -32,6 +32,15 @@ internal fun IComponent.headerStyles() {
         color = textPrimary
         whiteSpace = WhiteSpace.Nowrap
     }
+    globalStyle(selector = "header .header-mode") {
+        fontSize = 11.px
+        setStyle("padding", "2px 8px")
+        borderRadius = 4.px
+        background = Background(color = borderSubtle)
+        color = textSecondary
+        setStyle("font-weight", "500")
+        whiteSpace = WhiteSpace.Nowrap
+    }
     globalStyle(selector = "header .header-info") {
         color = textSecondary
         fontSize = 12.px

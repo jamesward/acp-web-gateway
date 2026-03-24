@@ -36,6 +36,8 @@ class App : Application() {
     private var agentVersion by mutableStateOf("")
     private var cwd by mutableStateOf<String?>(null)
     private var agentWorking by mutableStateOf(false)
+    private var currentModeName by mutableStateOf<String?>(null)
+    private var sessionTitle by mutableStateOf<String?>(null)
     private var reconnectDelay = 1000
     private var lastSeq: Long = 0
 
@@ -208,6 +210,8 @@ class App : Application() {
                     currentPlan = null
                     planFileContent = null
                     lastEditContent = null
+                    currentModeName = null
+                    sessionTitle = null
                 }
                 stopStatusTimer()
                 agentWorking = msg.agentWorking
@@ -326,7 +330,18 @@ class App : Application() {
                 fileAutocompleteResults = msg.files
                 if (msg.files.isEmpty()) dismissFileAutocomplete()
             }
-            else -> {}
+            is WsMessage.CurrentMode -> {
+                currentModeName = msg.modeName
+            }
+            is WsMessage.SessionInfo -> {
+                if (msg.title != null) {
+                    sessionTitle = msg.title
+                }
+            }
+            // Client→server messages — not expected from the server
+            is WsMessage.Prompt, is WsMessage.Cancel,
+            is WsMessage.PermissionResponse, is WsMessage.ChangeAgent,
+            is WsMessage.FileListRequest, is WsMessage.ResumeFrom -> {}
         }
     }
 
@@ -342,7 +357,12 @@ class App : Application() {
             if (agentIcon != null) {
                 img(src = agentIcon, alt = agentName) { className("header-icon") }
             }
-            span(className = "header-title") { +(agentName.ifEmpty { "ACP Gateway" }) }
+            span(className = "header-title") { +(sessionTitle ?: agentName.ifEmpty { "ACP Gateway" }) }
+
+            val mode = currentModeName
+            if (mode != null) {
+                span(className = "header-mode") { +mode }
+            }
 
             if (availableAgents.size > 1) {
                 button("\u21C4") {

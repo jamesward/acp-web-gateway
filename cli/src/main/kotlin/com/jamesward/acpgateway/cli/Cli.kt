@@ -6,7 +6,9 @@ import com.github.ajalt.clikt.core.main
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.optionalValue
+import com.github.ajalt.clikt.parameters.options.versionOption
 import com.jamesward.acpgateway.shared.*
+import io.github.z4kn4fein.semver.toVersionOrNull
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.websocket.*
@@ -16,6 +18,8 @@ import io.ktor.websocket.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.net.ServerSocket
@@ -26,6 +30,28 @@ private val json = Json { ignoreUnknownKeys = true }
 
 private const val DEFAULT_REMOTE_URL = "https://www.acp2web.com"
 private const val DOCKER_IMAGE = "ghcr.io/jamesward/acp-web-gateway"
+private const val GITHUB_RELEASES_URL = "https://api.github.com/repos/jamesward/acp-web-gateway/releases/latest"
+
+internal val cliVersion: String by lazy {
+    val props = Properties()
+    Acp2Web::class.java.getResourceAsStream("/version.properties")?.use { props.load(it) }
+    props.getProperty("version", "unknown").removePrefix("v")
+}
+
+/**
+ * Strips leading 'v' and any git-describe suffix (e.g. "v0.0.10-3-gabcdef" → "0.0.10")
+ * to produce a clean semver string.
+ */
+internal fun cleanVersionString(raw: String): String {
+    val stripped = raw.removePrefix("v")
+    // git-describe appends "-<N>-g<hash>" for dirty versions
+    val dashParts = stripped.split("-")
+    return if (dashParts.size >= 3 && dashParts.last().startsWith("g")) {
+        dashParts.dropLast(2).joinToString("-")
+    } else {
+        stripped
+    }
+}
 
 @Serializable
 private data class ServerState(val port: Int, val containerId: String)
@@ -34,6 +60,10 @@ private val stateDir = File(System.getProperty("user.home"), ".acp2web")
 private val stateFile = File(stateDir, "server.json")
 
 class Acp2Web : CliktCommand(name = "acp2web") {
+    init {
+        versionOption(cliVersion, names = setOf("--version", "-V"))
+    }
+
     val agent by option("--agent", help = "Agent ID from the ACP registry")
     val agentCommand by option("--agent-command", help = "Custom agent command (e.g. \"kiro-cli acp\")")
     val remote by option("--remote", help = "Connect to a remote gateway server (default: $DEFAULT_REMOTE_URL)")
@@ -77,7 +107,8 @@ class Acp2Web : CliktCommand(name = "acp2web") {
                 .replace("https://", "wss://") + "/s/$sessionId/agent"
             val pageUrl = "$gatewayUrl/s/$sessionId"
 
-            echo("ACP Web Gateway CLI")
+            echo("ACP Web Gateway CLI $cliVersion")
+            checkForUpdate(httpClient)
             echo("Session: $pageUrl")
             echo("Open this URL in your browser.")
             echo()
@@ -254,6 +285,29 @@ private fun startAgentFromCommand(commandString: String, workingDir: String): Ag
     val manager = AgentProcessManager(command, workingDir)
     runBlocking { manager.start() }
     return manager
+}
+
+private suspend fun Acp2Web.checkForUpdate(httpClient: HttpClient) {
+    try {
+        val currentClean = cleanVersionString(cliVersion)
+        val current = currentClean.toVersionOrNull() ?: return
+
+        val response = httpClient.get(GITHUB_RELEASES_URL) {
+            header("Accept", "application/vnd.github.v3+json")
+        }
+        if (response.status.value != 200) return
+
+        val body = json.decodeFromString(JsonObject.serializer(), response.bodyAsText())
+        val tagName = body["tag_name"]?.jsonPrimitive?.content ?: return
+        val latestClean = cleanVersionString(tagName)
+        val latest = latestClean.toVersionOrNull() ?: return
+
+        if (current < latest) {
+            echo("Update available: $currentClean → $latestClean (https://github.com/jamesward/acp-web-gateway/releases/latest)")
+        }
+    } catch (e: Exception) {
+        logger.debug("Version check failed", e)
+    }
 }
 
 fun main(args: Array<String>) = Acp2Web().main(args)

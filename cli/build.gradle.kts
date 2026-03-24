@@ -34,6 +34,22 @@ tasks.named<JavaExec>("run") {
     workingDir = rootProject.projectDir
 }
 
+val generateVersionProperties by tasks.registering {
+    val outputDir = layout.buildDirectory.dir("generated/version")
+    val projectVersion = project.version.toString()
+    outputs.dir(outputDir)
+    inputs.property("version", projectVersion)
+    doLast {
+        val propsFile = outputDir.get().file("version.properties").asFile
+        propsFile.parentFile.mkdirs()
+        propsFile.writeText("version=$projectVersion\n")
+    }
+}
+
+sourceSets.main {
+    resources.srcDir(generateVersionProperties.map { it.outputs.files.singleFile })
+}
+
 graalvmNative {
     binaries {
         named("main") {

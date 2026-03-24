@@ -155,7 +155,15 @@ fun Application.module(
                                 is WsMessage.TurnComplete -> relay.turnActive = false
                                 is WsMessage.AgentText, is WsMessage.AgentThought,
                                 is WsMessage.ToolCall, is WsMessage.PermissionRequest -> relay.turnActive = true
-                                else -> {}
+                                is WsMessage.AgentImage, is WsMessage.PlanUpdate -> relay.turnActive = true
+                                is WsMessage.Error -> relay.turnActive = false
+                                is WsMessage.Connected, is WsMessage.CurrentMode,
+                                is WsMessage.SessionInfo,
+                                is WsMessage.UserMessage, is WsMessage.AvailableCommands,
+                                is WsMessage.AvailableAgents, is WsMessage.FileListResponse,
+                                is WsMessage.Prompt, is WsMessage.Cancel,
+                                is WsMessage.PermissionResponse, is WsMessage.ChangeAgent,
+                                is WsMessage.FileListRequest, is WsMessage.ResumeFrom -> {}
                             }
                         }
 

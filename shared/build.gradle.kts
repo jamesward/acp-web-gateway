@@ -26,6 +26,7 @@ kotlin {
         commonMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
             implementation("dev.kilua:kilua-rpc-ktor:$kiluaRpcVersion")
+            api("io.github.z4kn4fein:semver:2.0.0")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
