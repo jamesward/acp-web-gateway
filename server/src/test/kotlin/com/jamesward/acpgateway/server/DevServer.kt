@@ -1,17 +1,17 @@
 package com.jamesward.acpgateway.server
 
-import io.ktor.http.*
-import io.ktor.server.application.*
-import io.ktor.server.html.*
-import io.ktor.server.http.content.*
-import io.ktor.server.response.*
 import com.jamesward.acpgateway.shared.*
 import dev.kilua.rpc.applyRoutes
 import dev.kilua.rpc.initRpc
 import dev.kilua.rpc.registerService
-import io.ktor.server.routing.*
+import io.ktor.http.*
+import io.ktor.server.application.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
+import io.ktor.server.html.*
+import io.ktor.server.http.content.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -91,8 +91,8 @@ class AgentHolder(
     }
 
     /**
-     * Start in simulated agent mode using a ReplayableFakeClientSession.
-     * No real agent process is spawned — uses canned simulation data instead.
+     * Start in simulated agent mode using a fake session.
+     * No real agent process is spawned — use /simulate-<name> commands to replay JSON data.
      */
     suspend fun setupSimulatedAgent() {
         lock.withLock {
@@ -103,7 +103,7 @@ class AgentHolder(
             mgr.agentVersion = "1.0.0"
 
             val clientOps = GatewayClientOperations()
-            val fakeSession = ReplayableFakeClientSession(clientOps)
+            val fakeSession = ControllableFakeClientSession()
             val testScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
             val session = GatewaySession(
                 id = java.util.UUID.randomUUID(),
@@ -114,7 +114,6 @@ class AgentHolder(
                 store = mgr.store,
             )
             session.ready = true
-            session.startEventForwarding()
             mgr.sessions[session.id] = session
 
             manager = mgr
@@ -146,6 +145,8 @@ fun Application.devModule(
     onReload: () -> Unit = {},
     commandHandler: CommandHandler? = null,
     internalCommands: List<CommandInfo> = emptyList(),
+    promptInterceptor: PromptInterceptor? = null,
+    captureCallback: CaptureCallback? = null,
 ) {
     install(WebSockets) {
         pingPeriod = 15.seconds
@@ -155,7 +156,7 @@ fun Application.devModule(
 
     initRpc {
         registerService<IChatService> { _, _ ->
-            DevChatServiceImpl(holder, debug, commandHandler, internalCommands)
+            DevChatServiceImpl(holder, debug, commandHandler, internalCommands, promptInterceptor, captureCallback)
         }
     }
 
@@ -200,6 +201,8 @@ class DevChatServiceImpl(
     private val debug: Boolean,
     private val commandHandler: CommandHandler?,
     private val internalCommands: List<CommandInfo>,
+    private val promptInterceptor: PromptInterceptor? = null,
+    private val captureCallback: CaptureCallback? = null,
 ) : IChatService {
     override suspend fun chat(
         input: kotlinx.coroutines.channels.ReceiveChannel<WsMessage>,
@@ -247,6 +250,8 @@ class DevChatServiceImpl(
                     internalCommands = internalCommands,
                     availableAgents = holder.registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
                     currentAgentId = holder.currentAgentId,
+                    promptInterceptor = promptInterceptor,
+                    captureCallback = captureCallback,
                 )
                 return
             } catch (e: AgentSwitchException) {
@@ -278,6 +283,8 @@ data class DevServerConfig(
     val dev: Boolean,
     val commandHandler: CommandHandler? = null,
     val internalCommands: List<CommandInfo> = emptyList(),
+    val promptInterceptor: PromptInterceptor? = null,
+    val captureCallback: CaptureCallback? = null,
 )
 
 fun parseDevServerConfig(args: Array<String>): DevServerConfig {
@@ -335,6 +342,17 @@ fun startDevServer(config: DevServerConfig) {
         }
     }
 
+    // Build simulation interceptor and commands when debug mode is on
+    val interceptor = if (config.debug) {
+        config.promptInterceptor ?: buildSimulationInterceptor()
+    } else config.promptInterceptor
+    val captureCallback = if (config.debug) {
+        config.captureCallback ?: defaultCaptureCallback
+    } else config.captureCallback
+    val allCommands = if (config.debug) {
+        simulationCommands + config.internalCommands
+    } else config.internalCommands
+
     lateinit var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>
     server = embeddedServer(CIO, configure = {
         connector {
@@ -348,7 +366,9 @@ fun startDevServer(config: DevServerConfig) {
                 Runtime.getRuntime().halt(0)
             },
             commandHandler = config.commandHandler,
-            internalCommands = config.internalCommands,
+            internalCommands = allCommands,
+            promptInterceptor = interceptor,
+            captureCallback = captureCallback,
         )
     }
     server.start(wait = false)

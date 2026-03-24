@@ -1,10 +1,8 @@
 package com.jamesward.acpgateway.server
-import com.jamesward.acpgateway.shared.*
 
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.EmbeddedResourceResource
-import com.jamesward.acpgateway.shared.FileAttachment
-import com.jamesward.acpgateway.shared.WsMessage
+import com.jamesward.acpgateway.shared.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -17,12 +15,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
-import java.util.UUID
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
+import java.util.*
+import kotlin.test.*
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class ServerTest {
 
@@ -335,7 +331,7 @@ class ServerTest {
         val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png"))
 
         val impl = ChatServiceImpl(
-            registry, false, sessionId,
+            registry, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -384,7 +380,7 @@ class ServerTest {
         relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(), connectedMsg))
 
         val impl = ChatServiceImpl(
-            emptyList(), false, sessionId,
+            emptyList(), sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -431,7 +427,7 @@ class ServerTest {
         val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0"))
 
         val impl = ChatServiceImpl(
-            registry, false, sessionId,
+            registry, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -466,7 +462,7 @@ class ServerTest {
         val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0", icon = "https://example.com/icon.png"))
 
         val impl = ChatServiceImpl(
-            registry, false, sessionId,
+            registry, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -506,7 +502,7 @@ class ServerTest {
         )
 
         val impl = ChatServiceImpl(
-            registry, false, sessionId,
+            registry, sessionId,
             relayLookup = { if (it == sessionId) relay else null },
         )
 
@@ -525,6 +521,74 @@ class ServerTest {
 
         val commands = withTimeout(5000) { output.receive() }
         assertIs<WsMessage.AvailableCommands>(commands)
+
+        input.close()
+        job.join()
+    }
+
+    @Test
+    fun proxyModeRelaySecondClientSeesAgentWorkingDuringActiveTurn() = runTest {
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+        relay.agentId = "test-agent"
+        // Simulate a turn in progress: Connected was cached, then streaming content started
+        relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(),
+            WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)))
+        relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(),
+            WsMessage.AgentText("1", "hello ")))
+        relay.turnActive = true
+
+        val impl = ChatServiceImpl(
+            emptyList(), sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        val connected = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.Connected>(connected)
+        assertTrue(connected.agentWorking, "Second client should see agentWorking=true during active turn")
+
+        val text = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.AgentText>(text)
+
+        input.close()
+        job.join()
+    }
+
+    @Test
+    fun proxyModeRelaySynthesizedConnectedReflectsTurnActive() = runTest {
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+        relay.agentId = "test-agent"
+        // No Connected in cache, but turn is active
+        relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(),
+            WsMessage.AgentText("1", "streaming ")))
+        relay.turnActive = true
+
+        val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0"))
+
+        val impl = ChatServiceImpl(
+            registry, sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        // First message should be the cached AgentText
+        val text = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.AgentText>(text)
+
+        // Then the synthesized Connected (no Connected was in cache)
+        val connected = withTimeout(5000) { output.receive() }
+        assertIs<WsMessage.Connected>(connected)
+        assertTrue(connected.agentWorking, "Synthesized Connected should reflect turnActive=true")
 
         input.close()
         job.join()
@@ -556,6 +620,85 @@ class ServerTest {
         }
 
         job.join()
+    }
+
+    @Test
+    fun idleShutdownMonitorTriggersAfterGracePeriod() = runTest {
+        val relaySessions = java.util.concurrent.ConcurrentHashMap<UUID, RelaySession>()
+        var shutdownCalled = false
+        val monitor = IdleShutdownMonitor(
+            relaySessions,
+            gracePeriod = 100.milliseconds,
+            startupGracePeriod = 100.milliseconds,
+            onShutdown = { shutdownCalled = true },
+        )
+
+        // No sessions at startup — trigger startup grace timer
+        monitor.onSessionCountChanged()
+        Thread.sleep(200)
+        assertTrue(shutdownCalled, "Should have shut down after startup grace period with no sessions")
+        monitor.close()
+    }
+
+    @Test
+    fun idleShutdownMonitorCancelledByNewSession() = runTest {
+        val relaySessions = java.util.concurrent.ConcurrentHashMap<UUID, RelaySession>()
+        var shutdownCalled = false
+        val monitor = IdleShutdownMonitor(
+            relaySessions,
+            gracePeriod = 100.milliseconds,
+            startupGracePeriod = 200.milliseconds,
+            onShutdown = { shutdownCalled = true },
+        )
+
+        // Start with no sessions
+        monitor.onSessionCountChanged()
+
+        // Add a session before grace period expires
+        Thread.sleep(50)
+        val id = UUID.randomUUID()
+        relaySessions[id] = RelaySession(id)
+        monitor.onSessionCountChanged()
+
+        // Wait past the original grace period
+        Thread.sleep(250)
+        assertFalse(shutdownCalled, "Should NOT have shut down — a session was added")
+        monitor.close()
+    }
+
+    @Test
+    fun idleShutdownMonitorTriggersAfterLastSessionRemoved() = runTest {
+        val relaySessions = java.util.concurrent.ConcurrentHashMap<UUID, RelaySession>()
+        var shutdownCalled = false
+        val monitor = IdleShutdownMonitor(
+            relaySessions,
+            gracePeriod = 100.milliseconds,
+            startupGracePeriod = 5.seconds,
+            onShutdown = { shutdownCalled = true },
+        )
+
+        // Start with a session already present
+        val id = UUID.randomUUID()
+        relaySessions[id] = RelaySession(id)
+        monitor.onSessionCountChanged()
+
+        // Remove the session
+        relaySessions.remove(id)
+        monitor.onSessionCountChanged()
+
+        Thread.sleep(200)
+        assertTrue(shutdownCalled, "Should have shut down after last session was removed")
+        monitor.close()
+    }
+
+    @Test
+    fun parseServerConfigShutdownOnIdle() {
+        val config = parseServerConfig(arrayOf("--shutdown-on-idle", "--debug"))
+        assertTrue(config.shutdownOnIdle)
+        assertTrue(config.debug)
+
+        val config2 = parseServerConfig(arrayOf("--debug"))
+        assertFalse(config2.shutdownOnIdle)
     }
 
 }

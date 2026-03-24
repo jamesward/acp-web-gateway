@@ -119,6 +119,37 @@ internal fun IComponent.toolStyles() {
         whiteSpace = WhiteSpace.PreWrap
         wordBreak = WordBreak.BreakAll
     }
+
+    // ---- Read tool: syntax-highlighted code with line numbers ----
+
+    globalStyle(selector = ".code-read") {
+        background = Background(color = bgBody)
+        borderRadius = radius
+        overflowX = Overflow.Auto
+        fontSize = 12.px
+        fontFamily = FONT_MONO
+    }
+    globalStyle(selector = ".code-table") {
+        setStyle("border-collapse", "collapse")
+        width = 100.perc
+    }
+    globalStyle(selector = ".line-num") {
+        setStyle("text-align", "right")
+        setStyle("padding", "0 12px 0 8px")
+        setStyle("user-select", "none")
+        color = textMuted
+        setStyle("vertical-align", "top")
+        whiteSpace = WhiteSpace.Nowrap
+        borderRight = Border(1.px, BorderStyle.Solid, borderSubtle)
+        setStyle("position", "sticky")
+        setStyle("left", "0")
+        background = Background(color = bgBody)
+    }
+    globalStyle(selector = ".line-code") {
+        whiteSpace = WhiteSpace.Pre
+        setStyle("padding", "0 8px")
+        width = 100.perc
+    }
 }
 
 // ---- Plan View ----

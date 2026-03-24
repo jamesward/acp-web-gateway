@@ -327,7 +327,6 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
   - Exponential backoff reconnect on relay WebSocket disconnect
   - Sequence-based delta catch-up on relay reconnect
 - Global config file for default agent selection
-- Code syntax highlighting in rendered blocks
 - Audio recording support (MediaRecorder API)
 - Additional functionality
   - Skills Directory with SkillsJars
@@ -340,7 +339,5 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
   - Option A: Use `./gradlew :server:runShadow` (already available via Ktor plugin, zero changes, but slower startup due to fat jar build)
   - Option B: Add a custom `runJar` task that depends on the `jar` task and runs from the built jar + dependency jars instead of loose class files (fast, isolated from recompilation)
 - <tool_use_error>Cancelled: parallel tool call WebFetch errored</tool_use_error>
-- The file diff renderer is or was on the server side. we need to move it to the client side.
 - Kotlin/Native for CLI once Kotlin ACP has native targets
-
-- Diff rendering
+- diff rendering in tool call isn't nice

@@ -18,7 +18,7 @@ internal fun IComponent.permissionDialogStyles() {
         padding = 16.px
         display = Display.Flex
         alignItems = AlignItems.Center
-        setStyle("gap", "16px")
+        setStyle("gap", "12px")
         zIndex = 100
         setStyle("flex-wrap", "wrap")
     }
@@ -39,20 +39,21 @@ internal fun IComponent.permissionDialogStyles() {
     }
     globalStyle(selector = ".permission-bar .perm-description") {
         overflow = Overflow.Auto
-        maxHeight = 120.px
+        maxHeight = 40.vh
         background = Background(color = bgBody)
+        border = Border(1.px, BorderStyle.Solid, borderSubtle)
         borderRadius = radius
-        padding = 8.px
-        marginTop = 8.px
-        fontSize = 12.px
+        padding = 12.px
+        fontSize = 13.px
         color = textSecondary
-        lineHeight = 1.4.units
+        lineHeight = 1.5.units
         setStyle("flex-basis", "100%")
     }
     globalStyle(selector = ".permission-bar .perm-actions") {
         display = Display.Flex
         setStyle("gap", "8px")
-        setStyle("flex-shrink", "0")
+        setStyle("flex-wrap", "wrap")
+        setStyle("flex", "1 1 auto")
     }
     globalStyle(selector = ".permission-bar button") {
         setStyle("padding", "6px 16px")
@@ -62,7 +63,6 @@ internal fun IComponent.permissionDialogStyles() {
         color = textPrimary
         fontSize = 13.px
         cursor = Cursor.Pointer
-        setStyle("white-space", "nowrap")
         transitionList = listOf(
             Transition("background", 150.milliseconds),
             Transition("border-color", 150.milliseconds),

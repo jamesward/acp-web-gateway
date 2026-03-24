@@ -1,18 +1,21 @@
 package com.jamesward.acpgateway.server
 
 import com.jamesward.acpgateway.shared.*
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO as ClientCIO
-import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
-import io.ktor.client.plugins.websocket.webSocket as clientWebSocket
+import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import java.net.ServerSocket
-import java.util.UUID
-import kotlin.test.*
+import java.util.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import io.ktor.client.engine.cio.CIO as ClientCIO
+import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
+import io.ktor.client.plugins.websocket.webSocket as clientWebSocket
 
 /**
  * Integration test for the CLI relay flow.

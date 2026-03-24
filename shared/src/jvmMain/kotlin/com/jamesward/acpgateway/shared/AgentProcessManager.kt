@@ -11,23 +11,16 @@ import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.*
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.transport.StdioTransport
-import com.jamesward.acpgateway.shared.*
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.SendChannel
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -86,6 +79,10 @@ class GatewaySession(
     /** All commands: internal + agent-provided. */
     val allCommands: List<CommandInfo> get() = internalCommands + availableCommands
 
+    /** Optional listener invoked on each broadcast for capturing simulation data. */
+    @Volatile
+    var captureListener: ((WsMessage) -> Unit)? = null
+
     // ---- Sequence-based delta streaming ----
 
     /** Monotonic sequence counter for outbound messages. */
@@ -132,6 +129,8 @@ class GatewaySession(
         synchronized(turnBufferLock) {
             turnBuffer.add(seqMsg)
         }
+
+        captureListener?.invoke(stamped)
 
         val dead = mutableListOf<SendChannel<WsMessage>>()
         for (conn in connections) {

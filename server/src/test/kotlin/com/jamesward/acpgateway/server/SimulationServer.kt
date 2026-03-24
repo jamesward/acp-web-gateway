@@ -1,8 +1,6 @@
 package com.jamesward.acpgateway.server
-import com.jamesward.acpgateway.shared.*
 
-import com.agentclientprotocol.common.Event
-import com.agentclientprotocol.model.*
+import com.jamesward.acpgateway.shared.*
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.cio.*
@@ -12,34 +10,12 @@ import io.ktor.server.http.content.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
-import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.slf4j.LoggerFactory
-import java.util.UUID
+import java.util.*
 
 private val logger = LoggerFactory.getLogger("SimulationServer")
-
-private const val AUTO_PROMPT = "Explain how Kotlin coroutines work, show examples, and walk me through advanced patterns."
-
-// buildSimulationResponse() is now in main sources (SimulationData.kt)
-
-/**
- * A ControllableFakeClientSession that automatically re-enqueues
- * the simulation response after each prompt, enabling re-runs.
- */
-class ReplayableFakeClientSession(private val clientOps: GatewayClientOperations? = null) : ControllableFakeClientSession() {
-    init {
-        enqueueResponse(buildSimulationResponse(clientOps))
-    }
-
-    override suspend fun prompt(content: List<ContentBlock>, _meta: kotlinx.serialization.json.JsonElement?): kotlinx.coroutines.flow.Flow<Event> {
-        val result = super.prompt(content, _meta)
-        // Always have a response ready for the next prompt
-        enqueueResponse(buildSimulationResponse(clientOps))
-        return result
-    }
-}
 
 private fun Application.simulationModule(
     manager: AgentProcessManager,
@@ -63,7 +39,12 @@ private fun Application.simulationModule(
         }
 
         webSocket("/ws") {
-            handleChatWebSocket(session, manager, autoPromptText, debug = true)
+            handleChatWebSocket(
+                session, manager, autoPromptText, debug = true,
+                internalCommands = simulationCommands,
+                promptInterceptor = buildSimulationInterceptor(),
+                captureCallback = defaultCaptureCallback,
+            )
         }
 
         staticResources("/static", "static")
@@ -79,7 +60,7 @@ fun main() {
     manager.agentVersion = "1.0.0"
 
     val clientOps = GatewayClientOperations()
-    val fakeSession = ReplayableFakeClientSession(clientOps)
+    val fakeSession = ControllableFakeClientSession()
 
     val testScope = CoroutineScope(Dispatchers.Default)
     val session = GatewaySession(
@@ -91,7 +72,6 @@ fun main() {
         store = manager.store,
     )
     session.ready = true
-    session.startEventForwarding()
     manager.sessions[session.id] = session
 
     logger.info("Starting simulation server on port {}", port)
@@ -99,13 +79,12 @@ fun main() {
     val server = embeddedServer(CIO, configure = {
         connector { this.port = port }
     }) {
-        simulationModule(manager, session, AUTO_PROMPT)
+        simulationModule(manager, session, "/simulate-default")
     }
     server.start(wait = false)
 
     logger.info("Simulation server started on http://localhost:{}", port)
     logger.info("Connect a browser to see the simulated agent interaction")
-    logger.info("Send any message to re-run the simulation")
 
     Runtime.getRuntime().addShutdownHook(Thread({
         logger.info("Shutting down simulation server")

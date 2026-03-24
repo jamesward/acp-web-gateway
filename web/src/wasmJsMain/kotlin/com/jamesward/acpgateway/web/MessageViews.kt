@@ -3,6 +3,7 @@ package com.jamesward.acpgateway.web
 import androidx.compose.runtime.Composable
 import com.jamesward.acpgateway.shared.PlanEntryInfo
 import com.jamesward.acpgateway.shared.PlanEntryStatus
+import com.jamesward.acpgateway.shared.ToolKind
 import com.jamesward.acpgateway.shared.ToolStatus
 import dev.kilua.core.IComponent
 import dev.kilua.html.*
@@ -113,6 +114,10 @@ private fun IComponent.toolRow(tc: ToolCallState) {
             val contentText = tc.content
             if (contentHtml != null) {
                 div(className = "tool-content") { rawHtml(contentHtml) }
+            } else if ((tc.kind == ToolKind.Read || tc.kind == ToolKind.Edit) && !contentText.isNullOrEmpty() && !tc.location.isNullOrEmpty()) {
+                div(className = "tool-content") {
+                    rawHtml(formatReadContent(contentText, tc.location))
+                }
             } else if (!contentText.isNullOrEmpty()) {
                 div(className = "tool-content msg-body") {
                     rawHtml(renderMarkdown(contentText))

@@ -2,7 +2,8 @@ package com.jamesward.acpgateway.web
 
 import androidx.compose.runtime.Composable
 import dev.kilua.core.IComponent
-import dev.kilua.html.*
+import dev.kilua.html.Display
+import dev.kilua.html.perc
 import dev.kilua.html.style.globalStyle
 
 // ---- Syntax Highlighting (highlight.js tokens) ----

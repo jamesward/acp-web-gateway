@@ -1,5 +1,4 @@
 package com.jamesward.acpgateway.server
-import com.jamesward.acpgateway.shared.*
 
 import com.jamesward.acpgateway.shared.CommandInfo
 import org.slf4j.LoggerFactory
@@ -11,7 +10,7 @@ private val logger = LoggerFactory.getLogger("AutoPilotServer")
  * When `/autopilot` is sent in the chat, a Playwright container starts (via Testcontainers)
  * and the agent receives a screenshot of its own web UI to analyze and improve.
  *
- * Usage: ./gradlew :server:runAutoPilot --args="--agent claude-code --debug --dev"
+ * Usage: ./gradlew :server:runAutoPilot --args="--agent claude-acp --debug --dev"
  */
 fun main(args: Array<String>) {
     val config = parseDevServerConfig(args)

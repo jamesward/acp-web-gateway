@@ -1,0 +1,1813 @@
+[
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "Let me "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "think about this carefully. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "Kotlin coroutines are a broad topic "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "covering structured concurrency, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "suspend functions, flows, channels, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "and error handling patterns. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "I'll organize this into a comprehensive guide "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "starting with fundamentals, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "then moving to intermediate concepts, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "and finally covering advanced patterns "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "like custom coroutine contexts, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "supervision, and backpressure handling. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "Let me also find some relevant source files "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "to ground the examples in real code."
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-1",
+            "title": "Read src/main/kotlin/Example.kt",
+            "status": "in_progress",
+            "kind": "read",
+            "location": "src/main/kotlin/Example.kt"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-1",
+            "title": "Read src/main/kotlin/Example.kt",
+            "status": "completed",
+            "content": "package com.example\n\nimport kotlinx.coroutines.*\n\nfun main() = runBlocking {\n    println(\"Hello from coroutines!\")\n    launch {\n        delay(1000)\n        println(\"World!\")\n    }\n    println(\"Waiting...\")\n}"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "",
+            "usage": "12K / 200K tokens (6%) \u00b7 $0.12"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "# Kotlin Coroutines \u2014 A Comprehensive Guide\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "## 1. Fundamentals\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Kotlin coroutines are a "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "**lightweight concurrency framework** "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "built into the language. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Unlike threads, coroutines are "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "incredibly cheap to create \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "you can launch thousands of them "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "without running out of memory.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### What is a Coroutine?\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "A coroutine is a "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "**suspendable computation**. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "It can be paused at any "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "`suspend` point and resumed later, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "potentially on a different thread. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "This is fundamentally different from threads, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "which are managed by the OS.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Coroutine Builders\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "There are several ways to start a coroutine:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "1. **`launch`** \u2014 Fire-and-forget. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Returns a `Job` that can be cancelled.\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "2. **`async`** \u2014 Returns a `Deferred<T>` "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "whose result can be awaited.\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "3. **`runBlocking`** \u2014 Bridges the "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "blocking and non-blocking worlds.\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "4. **`coroutineScope`** \u2014 Creates a scope "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "that waits for all children to complete.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-2",
+            "title": "Read build.gradle.kts",
+            "status": "in_progress",
+            "kind": "read",
+            "location": "build.gradle.kts"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-2",
+            "title": "Read build.gradle.kts",
+            "status": "completed",
+            "content": "dependencies {\n    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0\")\n    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.9.0\")\n    testImplementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0\")\n}"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "\n\nNow let me consider "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "the structured concurrency model "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "and how it relates to error handling. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_thought",
+            "thoughtId": "thought-sim",
+            "markdown": "This is crucial for production code."
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "## 2. Suspend Functions\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "A `suspend` function is the basic building block. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "It can call other suspend functions "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "and will pause execution without blocking a thread.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "suspend fun fetchUserProfile(userId: String): UserProfile {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    val user = userService.getUser(userId)    // suspends\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    val prefs = prefService.getPrefs(userId)  // suspends\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    return UserProfile(user, prefs)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "**Key insight**: The two service calls above "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "run **sequentially**. Each `suspend` call "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "pauses the coroutine until the result is ready, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "but it doesn't block the underlying thread.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Making Calls Concurrent\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "To run both calls concurrently, use `async`:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "suspend fun fetchUserProfile(userId: String): UserProfile = coroutineScope {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    val user = async { userService.getUser(userId) }\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    val prefs = async { prefService.getPrefs(userId) }\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    UserProfile(user.await(), prefs.await())\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Now both calls happen simultaneously, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "roughly halving the total time.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-write-1",
+            "title": "Write src/main/kotlin/CoroutineBasics.kt",
+            "status": "in_progress",
+            "kind": "edit",
+            "location": "src/main/kotlin/CoroutineBasics.kt"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-write-1",
+            "title": "Write src/main/kotlin/CoroutineBasics.kt",
+            "status": "completed",
+            "content": "```kotlin\npackage com.example\n\nimport kotlinx.coroutines.*\n\n// Demonstrates basic coroutine patterns\nsuspend fun fetchData(id: Int): String {\n    delay(1000) // simulate network call\n    return \"Data for id=$id\"\n}\n\nsuspend fun processAll(ids: List<Int>): List<String> = coroutineScope {\n    ids.map { id ->\n        async { fetchData(id) }\n    }.awaitAll()\n}\n\nfun main() = runBlocking {\n    println(\"Fetching data concurrently...\")\n    val start = System.currentTimeMillis()\n    val results = processAll((1..10).toList())\n    val elapsed = System.currentTimeMillis() - start\n    results.forEach { println(it) }\n    println(\"Completed in ${elapsed}ms (should be ~1000ms, not ~10000ms)\")\n}\n```"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "## 3. Structured Concurrency\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Structured concurrency is Kotlin's approach "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "to managing coroutine lifecycles. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Every coroutine must be launched in a **scope**, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "and when a scope is cancelled, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "all its children are cancelled too.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Why It Matters\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Without structured concurrency, you get:\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **Leaked coroutines** that run forever\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **Lost exceptions** that nobody handles\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **Resource leaks** from forgotten cleanup\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### The Scope Hierarchy\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "runBlocking          (top-level, blocks thread)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "  \u2514\u2500 coroutineScope  (suspends, doesn't block)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "       \u251c\u2500 launch     (child coroutine 1)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "       \u2514\u2500 async      (child coroutine 2)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "If any child fails, the scope cancels "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "all other children and re-throws the exception. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "This ensures you never have half-finished work "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "lingering in the background.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### SupervisorScope\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Sometimes you want children to fail independently. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "`supervisorScope` allows one child to fail "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "without cancelling siblings:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "supervisorScope {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    launch { riskyOperation1() }  // if this fails...\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    launch { riskyOperation2() }  // ...this keeps running\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-run-1",
+            "title": "Run ./gradlew :app:run",
+            "status": "in_progress",
+            "kind": "execute"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-run-1",
+            "title": "Run ./gradlew :app:run",
+            "status": "completed",
+            "content": "Fetching data concurrently...\nData for id=1\nData for id=2\nData for id=3\nData for id=4\nData for id=5\nData for id=6\nData for id=7\nData for id=8\nData for id=9\nData for id=10\nCompleted in 1023ms (should be ~1000ms, not ~10000ms)"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "",
+            "usage": "88K / 200K tokens (44%) \u00b7 $0.68"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "## 4. Kotlin Flows\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Flows are the coroutine equivalent of "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "reactive streams. They represent a "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "**cold, asynchronous sequence** of values.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Basic Flow\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "fun numberFlow(): Flow<Int> = flow {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    for (i in 1..5) {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "        delay(500)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "        emit(i)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    }\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Flow Operators\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Flows support familiar operators:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`map`** \u2014 Transform each element\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`filter`** \u2014 Keep matching elements\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`take`** \u2014 Limit the number of elements\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`collect`** \u2014 Terminal operator that processes values\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`toList`** \u2014 Collect all values into a list\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`reduce`** / **`fold`** \u2014 Aggregate values\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### StateFlow & SharedFlow\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "For hot streams (always active), use:\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`StateFlow`** \u2014 Holds a single updatable value, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "like `LiveData` but coroutine-native\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`SharedFlow`** \u2014 Broadcasts values "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "to multiple collectors\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Here's a visualization of the flow pipeline:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_image",
+            "msgId": "msg-sim",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAMgAAAA8CAIAAACsOWLGAAABAElEQVR42u3coQ2EQBCGUSrB0BBFUMRpNBp9+jT6NEVQxHawdDCbkOMyIY98BfyZPLWCru8H6ed1TiCwBJbAksASWAJL+ius5VMzFI88lpqhxiXLN0PxyLq/LgcWWGCBBRZYYIEFFlhgPRKWdMtzwzSXDMUjt+nIUOOS+5qheGR5j5cDCyywwAILLLDAAgsssMACC6w72uIvB6zGxhyw4pFggQUWWGCBBRZYYIEFFlieGzw3gAUWWGCBBRZYYIEFFlhggQUWWGCBBRZYYIEFFlhggQWW5HfcAktgSWAJLIElgSWwBJYElsASWBJYAksP7QRmr3LhjfGW1gAAAABJRU5ErkJggg==",
+            "mimeType": "image/png"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "\n\nAs you can see, data flows through each operator in sequence.\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-img",
+            "title": "Read docs/flow-diagram.png",
+            "status": "in_progress",
+            "kind": "read",
+            "location": "docs/flow-diagram.png"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-img",
+            "title": "Read docs/flow-diagram.png",
+            "status": "completed",
+            "kind": "read",
+            "location": "docs/flow-diagram.png",
+            "images": [
+                {
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAMgAAAA8CAIAAACsOWLGAAABAElEQVR42u3coQ2EQBCGUSrB0BBFUMRpNBp9+jT6NEVQxHawdDCbkOMyIY98BfyZPLWCru8H6ed1TiCwBJbAksASWAJL+ius5VMzFI88lpqhxiXLN0PxyLq/LgcWWGCBBRZYYIEFFlhgPRKWdMtzwzSXDMUjt+nIUOOS+5qheGR5j5cDCyywwAILLLDAAgsssMACC6w72uIvB6zGxhyw4pFggQUWWGCBBRZYYIEFFlieGzw3gAUWWGCBBRZYYIEFFlhggQUWWGCBBRZYYIEFFlhggQWW5HfcAktgSWAJLIElgSWwBJYElsASWBJYAksP7QRmr3LhjfGW1gAAAABJRU5ErkJggg==",
+                    "mimeType": "image/png"
+                }
+            ]
+        }
+    },
+    {
+        "message": {
+            "type": "agent_image",
+            "msgId": "msg-sim",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAMgAAAA8CAIAAACsOWLGAAABAElEQVR42u3coQ2EQBCGUSrB0BBFUMRpNBp9+jT6NEVQxHawdDCbkOMyIY98BfyZPLWCru8H6ed1TiCwBJbAksASWAJL+ius5VMzFI88lpqhxiXLN0PxyLq/LgcWWGCBBRZYYIEFFlhgPRKWdMtzwzSXDMUjt+nIUOOS+5qheGR5j5cDCyywwAILLLDAAgsssMACC6w72uIvB6zGxhyw4pFggQUWWGCBBRZYYIEFFlieGzw3gAUWWGCBBRZYYIEFFlhggQUWWGCBBRZYYIEFFlhggQWW5HfcAktgSWAJLIElgSWwBJYElsASWBJYAksP7QRmr3LhjfGW1gAAAABJRU5ErkJggg==",
+            "mimeType": "image/png"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-write-2",
+            "title": "Write src/main/kotlin/FlowExample.kt",
+            "status": "in_progress",
+            "kind": "edit",
+            "location": "src/main/kotlin/FlowExample.kt"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-write-2",
+            "title": "Write src/main/kotlin/FlowExample.kt",
+            "status": "completed",
+            "content": "```kotlin\npackage com.example\n\nimport kotlinx.coroutines.*\nimport kotlinx.coroutines.flow.*\n\n// Temperature sensor simulation using Flow\nfun temperatureReadings(): Flow<Double> = flow {\n    val baseTemp = 20.0\n    var drift = 0.0\n    while (true) {\n        drift += (-0.5..0.5).random()\n        emit(baseTemp + drift + (-1.0..1.0).random())\n        delay(200)\n    }\n}\n\nfun main() = runBlocking {\n    println(\"Monitoring temperature (10 readings)...\")\n\n    temperatureReadings()\n        .map { temp -> \"%.1f\u00b0C\".format(temp) }\n        .take(10)\n        .collect { reading ->\n            println(\"  Sensor: $reading\")\n        }\n\n    println(\"Done monitoring.\")\n}\n```"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "## 5. Error Handling\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Coroutine error handling follows "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "structured concurrency rules:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Try-Catch in Coroutines\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "val result = runCatching {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    fetchRemoteData()\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}.getOrElse { error ->\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    logger.warn(\"Fetch failed: ${error.message}\")\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    cachedData() // fallback\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Exception Propagation\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`launch`** \u2014 Exceptions propagate to the parent scope\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- **`async`** \u2014 Exceptions are stored in the `Deferred` "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "and thrown when `await()` is called\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### CoroutineExceptionHandler\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "For top-level uncaught exceptions:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "val handler = CoroutineExceptionHandler { _, exception ->\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    logger.error(\"Unhandled: ${exception.message}\")\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "scope.launch(handler) {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    riskyOperation()\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-3",
+            "title": "Read src/test/kotlin/CoroutineTest.kt",
+            "status": "in_progress",
+            "kind": "read",
+            "location": "src/test/kotlin/CoroutineTest.kt"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-read-3",
+            "title": "Read src/test/kotlin/CoroutineTest.kt",
+            "status": "completed",
+            "content": "class CoroutineTest {\n    @Test\n    fun `concurrent fetch completes in bounded time`() = runTest {\n        val results = processAll((1..100).toList())\n        assertEquals(100, results.size)\n    }\n\n    @Test\n    fun `cancellation propagates to children`() = runTest {\n        val job = launch {\n            repeat(1000) { i ->\n                pace(100)\n                println(\"Working $i\")\n            }\n        }\n        delay(350)\n        job.cancel()\n        assertTrue(job.isCancelled)\n    }\n}"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "## 6. Advanced Patterns\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Channels\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Channels are like blocking queues "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "but for coroutines. They're useful "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "for producer-consumer patterns:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "val channel = Channel<Int>(capacity = 10)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "launch {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    for (i in 1..100) {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "        channel.send(i)  // suspends if buffer full\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    }\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    channel.close()\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "for (value in channel) {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    process(value)  // suspends if buffer empty\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Mutex & Semaphore\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "For coroutine-safe shared state:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "val mutex = Mutex()\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "var counter = 0\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "coroutineScope {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    repeat(1000) {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "        launch {\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "            mutex.withLock { counter++ }\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "        }\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "    }\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "}\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "// counter == 1000, guaranteed\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Custom Dispatchers\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "You can create dispatchers "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "for specific use cases:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```kotlin\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "val dbDispatcher = Dispatchers.IO.limitedParallelism(4)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "val cpuDispatcher = Dispatchers.Default.limitedParallelism(2)\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "```\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-write-3",
+            "title": "Write src/test/kotlin/AdvancedCoroutineTest.kt",
+            "status": "in_progress",
+            "kind": "edit",
+            "location": "src/test/kotlin/AdvancedCoroutineTest.kt"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-write-3",
+            "title": "Write src/test/kotlin/AdvancedCoroutineTest.kt",
+            "status": "completed",
+            "content": "```kotlin\npackage com.example\n\nimport kotlinx.coroutines.*\nimport kotlinx.coroutines.test.*\nimport kotlin.test.*\n\nclass AdvancedCoroutineTest {\n\n    @Test\n    fun `supervisor scope isolates failures`() = runTest {\n        val results = mutableListOf<String>()\n\n        supervisorScope {\n            launch {\n                results.add(\"task1-start\")\n                pace(100)\n                results.add(\"task1-done\")\n            }\n            launch {\n                results.add(\"task2-start\")\n                throw RuntimeException(\"task2 failed\")\n            }\n            launch {\n                results.add(\"task3-start\")\n                pace(200)\n                results.add(\"task3-done\")\n            }\n        }\n\n        assertTrue(\"task1-done\" in results)\n        assertTrue(\"task3-done\" in results)\n        assertFalse(\"task2-done\" in results)\n    }\n\n    @Test\n    fun `flow backpressure works correctly`() = runTest {\n        val collected = mutableListOf<Int>()\n\n        flow {\n            repeat(100) { emit(it) }\n        }\n        .buffer(10)\n        .collect {\n            pace(10)\n            collected.add(it)\n        }\n\n        assertEquals(100, collected.size)\n    }\n}\n```"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-run-2",
+            "title": "Run ./gradlew test",
+            "status": "in_progress",
+            "kind": "execute"
+        }
+    },
+    {
+        "message": {
+            "type": "tool_call",
+            "toolCallId": "tc-run-2",
+            "title": "Run ./gradlew test",
+            "status": "completed",
+            "content": "> Task :test\n\ncom.example.AdvancedCoroutineTest\n  \u2713 supervisor scope isolates failures (45ms)\n  \u2713 flow backpressure works correctly (1023ms)\n\ncom.example.CoroutineTest\n  \u2713 concurrent fetch completes in bounded time (1015ms)\n  \u2713 cancellation propagates to children (362ms)\n\n4 tests completed, 0 failed\n\nBUILD SUCCESSFUL in 8s"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "",
+            "usage": "156K / 200K tokens (78%) \u00b7 $1.24"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "## Summary\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Here's what we covered and created:\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Files Created\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- `src/main/kotlin/CoroutineBasics.kt` \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Concurrent data fetching with `async`/`awaitAll`\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- `src/main/kotlin/FlowExample.kt` \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Temperature sensor simulation using `Flow`\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "- `src/test/kotlin/AdvancedCoroutineTest.kt` \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Tests for supervisor scope and flow backpressure\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "### Key Takeaways\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "1. **Coroutines are cheap** \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Launch thousands without worry\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "2. **Structured concurrency prevents leaks** \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Scopes manage lifecycle automatically\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "3. **`async`/`awaitAll` for concurrent calls** \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Run independent operations in parallel\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "4. **Flows for async sequences** \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Cold streams with backpressure support\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "5. **`supervisorScope` for fault isolation** \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Let siblings survive independent failures\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "6. **`runTest` for testing** \u2014 "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Virtual time makes tests fast and deterministic\n\n"
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "All tests pass. "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "Let me know if you'd like to explore "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "any of these topics in more depth, "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "or if you have a specific use case "
+        }
+    },
+    {
+        "message": {
+            "type": "agent_text",
+            "msgId": "msg-sim",
+            "markdown": "you'd like me to help implement!"
+        }
+    },
+    {
+        "message": {
+            "type": "turn_complete",
+            "stopReason": "end_turn"
+        }
+    }
+]

@@ -1,19 +1,12 @@
 package com.jamesward.acpgateway.cli
 
+import ch.qos.logback.classic.Level
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.main
-import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.optionalValue
-import com.jamesward.acpgateway.shared.AgentProcessManager
-import com.jamesward.acpgateway.shared.AgentSwitchException
-import com.jamesward.acpgateway.shared.RegistryAgent
-import com.jamesward.acpgateway.shared.WsMessage
-import com.jamesward.acpgateway.shared.fetchRegistry
-import com.jamesward.acpgateway.shared.handleChatWebSocket
-import com.jamesward.acpgateway.shared.parseCommandString
-import com.jamesward.acpgateway.shared.resolveAgentCommand
+import com.jamesward.acpgateway.shared.*
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.websocket.*
@@ -23,11 +16,10 @@ import io.ktor.websocket.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import ch.qos.logback.classic.Level
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.net.ServerSocket
-import java.util.UUID
+import java.util.*
 
 private val logger = LoggerFactory.getLogger("acp2web")
 private val json = Json { ignoreUnknownKeys = true }
@@ -102,9 +94,6 @@ class Acp2Web : CliktCommand(name = "acp2web") {
             // Shutdown hook cleans up the current manager and optionally stops Docker
             val shutdownHook = Thread({
                 currentManager?.close()
-                if (isDocker) {
-                    runBlocking { stopDockerIfEmpty(httpClient, gatewayUrl) }
-                }
             }, "acp2web-shutdown")
             Runtime.getRuntime().addShutdownHook(shutdownHook)
 
@@ -162,9 +151,6 @@ class Acp2Web : CliktCommand(name = "acp2web") {
             } finally {
                 httpClient.close()
                 currentManager?.close()
-                if (isDocker) {
-                    stopDockerIfEmpty(httpClient, gatewayUrl)
-                }
             }
         }
     }
@@ -199,6 +185,7 @@ private suspend fun ensureDockerServer(httpClient: HttpClient): String {
         "docker", "run", "-d", "--rm",
         "-p", "$port:8080",
         DOCKER_IMAGE,
+        "--shutdown-on-idle",
     ).redirectErrorStream(true).start()
 
     val output = process.inputStream.bufferedReader().readText().trim()
@@ -235,34 +222,6 @@ private suspend fun isServerAlive(httpClient: HttpClient, port: Int): Boolean {
     }
 }
 
-/**
- * Stops the Docker container if no other sessions are active.
- */
-private suspend fun stopDockerIfEmpty(httpClient: HttpClient, gatewayUrl: String) {
-    try {
-        // Check session count
-        val response = httpClient.get("$gatewayUrl/api/sessions/count")
-        val count = response.bodyAsText().trim().toIntOrNull() ?: return
-
-        if (count > 0) {
-            logger.info("Container still has {} active sessions, leaving running", count)
-            return
-        }
-
-        // No sessions — stop the container
-        if (stateFile.exists()) {
-            val state = json.decodeFromString(ServerState.serializer(), stateFile.readText())
-            logger.info("No active sessions, stopping Docker container {}", state.containerId)
-            ProcessBuilder("docker", "stop", state.containerId)
-                .redirectErrorStream(true)
-                .start()
-                .waitFor()
-            stateFile.delete()
-        }
-    } catch (e: Exception) {
-        logger.debug("Failed to check/stop Docker container: {}", e.message)
-    }
-}
 
 private suspend fun DefaultClientWebSocketSession.waitForChangeAgent(): String {
     for (frame in incoming) {

@@ -1,10 +1,8 @@
 package com.jamesward.acpgateway.server
-import com.jamesward.acpgateway.shared.*
 
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.model.PermissionOptionKind
-import com.jamesward.acpgateway.shared.FileAttachment
-import com.jamesward.acpgateway.shared.WsMessage
+import com.jamesward.acpgateway.shared.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
 import kotlin.test.Test
@@ -12,7 +10,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * Integration tests that spawn a real ACP agent (claude-code) and verify
+ * Integration tests that spawn a real ACP agent (claude-acp) and verify
  * that file attachments and screenshots are properly delivered.
  *
  * Skipped automatically if npx is not available or the agent cannot start.

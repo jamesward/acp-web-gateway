@@ -63,8 +63,27 @@ fun IComponent.switchingAgentModal(name: String) {
 }
 
 @Composable
-fun IComponent.permissionDialog(perm: WsMessage.PermissionRequest, onRespond: (toolCallId: String, optionId: String) -> Unit) {
+fun IComponent.permissionDialog(perm: WsMessage.PermissionRequest, planContent: String? = null, onRespond: (toolCallId: String, optionId: String) -> Unit) {
     div(className = "permission-bar") {
+        val desc = perm.description
+        if (desc != null) {
+            div(className = "perm-description msg-body") {
+                rawHtml(renderMarkdown(desc))
+            }
+        }
+        if (planContent != null) {
+            // Strip wrapping code fence if the content is ```markdown ... ```
+            val plan = planContent.trim().let { raw ->
+                if (raw.startsWith("```")) {
+                    raw.substringAfter('\n').removeSuffix("```").trim()
+                } else {
+                    raw
+                }
+            }
+            div(className = "perm-description msg-body") {
+                rawHtml(renderMarkdown(plan))
+            }
+        }
         div(className = "perm-title") {
             h3 { +perm.title }
         }
@@ -75,12 +94,6 @@ fun IComponent.permissionDialog(perm: WsMessage.PermissionRequest, onRespond: (t
                         onRespond(perm.toolCallId, opt.optionId)
                     }
                 }
-            }
-        }
-        val desc = perm.description
-        if (desc != null) {
-            div(className = "perm-description") {
-                rawHtml(renderMarkdown(desc))
             }
         }
     }

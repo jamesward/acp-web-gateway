@@ -188,6 +188,109 @@ internal external fun highlightCodeBlocks(html: String): String
 internal fun renderMarkdown(text: String): String =
     highlightCodeBlocks(dev.kilua.marked.parseMarkdown(text))
 
+/**
+ * Format Read tool content: strip cat-n line numbers, syntax-highlight, render with line number gutter.
+ * Falls back to plain pre block if parsing fails or no highlight.js available.
+ */
+@JsFun("""(content, location) => {
+    const hljs = globalThis.__hljs;
+
+    // Extension → highlight.js language
+    const extMap = {
+        kt:'kotlin',kts:'kotlin',java:'java',py:'python',js:'javascript',jsx:'javascript',
+        mjs:'javascript',ts:'typescript',tsx:'typescript',rs:'rust',go:'go',rb:'ruby',
+        sh:'bash',bash:'bash',zsh:'bash',json:'json',yaml:'yaml',yml:'yaml',xml:'xml',
+        html:'html',htm:'html',css:'css',scss:'scss',sql:'sql',md:'markdown',toml:'ini',
+        gradle:'groovy',groovy:'groovy',c:'c',h:'c',cpp:'cpp',cc:'cpp',cxx:'cpp',hpp:'cpp',
+        cs:'csharp',swift:'swift',dockerfile:'dockerfile',graphql:'graphql',gql:'graphql',
+        properties:'properties',conf:'ini',cfg:'ini',txt:'plaintext'
+    };
+
+    // Strip markdown code fences if present (e.g. from Write tool diffs)
+    let rawContent = content;
+    let fenceLang = null;
+    const fenceMatch = content.match(/^```(\w*)\n([\s\S]*?)\n```\s*$/);
+    if (fenceMatch) {
+        fenceLang = fenceMatch[1] || null;
+        rawContent = fenceMatch[2];
+    }
+
+    // Also handle diff fenced blocks — pass through to renderMarkdown instead
+    if (fenceLang === 'diff') {
+        const escaped = content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return '<pre><code>' + escaped + '</code></pre>';
+    }
+
+    // Parse cat-n lines: "  123\tcontent" or "  123→content"
+    const lines = rawContent.split('\n');
+    const parsed = [];
+    let startLine = 1;
+    let hasCatN = false;
+    for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^\s*(\d+)[\t\u2192](.*)$/);
+        if (m) {
+            if (i === 0) startLine = parseInt(m[1], 10);
+            parsed.push(m[2]);
+            hasCatN = true;
+        } else if (hasCatN && lines[i] === '' && i === lines.length - 1) {
+            // skip trailing empty line
+        } else {
+            parsed.push(lines[i]);
+        }
+    }
+
+    const code = parsed.join('\n');
+
+    // Determine language: fence hint > file extension
+    let lang = fenceLang || null;
+    if (location) {
+        const dot = location.lastIndexOf('.');
+        const slash = location.lastIndexOf('/');
+        if (dot > slash) {
+            const ext = location.substring(dot + 1).toLowerCase();
+            lang = extMap[ext] || null;
+        }
+        // Handle Dockerfile (no extension)
+        if (!lang) {
+            const fname = location.substring(slash + 1).toLowerCase();
+            if (fname === 'dockerfile' || fname.startsWith('dockerfile.')) lang = 'dockerfile';
+            else if (fname === 'makefile' || fname === 'gnumakefile') lang = 'makefile';
+        }
+    }
+
+    // Syntax highlight
+    let highlighted;
+    if (hljs && lang) {
+        try {
+            const result = hljs.highlight(code, {language: lang, ignoreIllegals: true});
+            highlighted = result.value;
+        } catch(e) {
+            highlighted = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+    } else if (hljs) {
+        try {
+            const result = hljs.highlightAuto(code);
+            highlighted = result.value;
+        } catch(e) {
+            highlighted = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+    } else {
+        highlighted = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // Build table rows with line numbers
+    const hLines = highlighted.split('\n');
+    const rows = [];
+    for (let i = 0; i < hLines.length; i++) {
+        const num = startLine + i;
+        const lineContent = hLines[i] || ' ';
+        rows.push('<tr><td class="line-num">' + num + '</td><td class="line-code">' + lineContent + '</td></tr>');
+    }
+
+    return '<div class="code-read"><table class="code-table"><tbody>' + rows.join('') + '</tbody></table></div>';
+}""")
+internal external fun formatReadContent(content: String, location: String): String
+
 // ---- File reading utilities ----
 
 internal data class FileData(val name: String, val mimeType: String, val base64: String)

@@ -2,27 +2,17 @@ package com.jamesward.acpgateway.shared
 
 import com.agentclientprotocol.annotations.UnstableApi
 import com.agentclientprotocol.common.Event
-import com.agentclientprotocol.model.AvailableCommandInput
-import com.agentclientprotocol.model.ContentBlock
-import com.agentclientprotocol.model.EmbeddedResourceResource
-import com.agentclientprotocol.model.PermissionOptionKind
-import com.agentclientprotocol.model.SessionUpdate
-import com.agentclientprotocol.model.ToolCallContent
-import com.agentclientprotocol.model.ToolCallStatus
+import com.agentclientprotocol.model.*
+import com.github.difflib.DiffUtils
+import com.github.difflib.UnifiedDiffUtils
 import io.ktor.websocket.*
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.consumeEach
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.Json
-import com.github.difflib.DiffUtils
-import com.github.difflib.UnifiedDiffUtils
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("WebSocketHandler")
@@ -30,6 +20,32 @@ private val logger = LoggerFactory.getLogger("WebSocketHandler")
 /** Thrown when a ChangeAgent message is received, signaling the caller to switch agents. */
 class AgentSwitchException(val agentId: String) : Exception("Switch to agent: $agentId")
 private val json = Json { ignoreUnknownKeys = true }
+
+// ---- Prompt interception for simulation/capture ----
+
+/**
+ * Action returned by a [PromptInterceptor] to control prompt handling.
+ */
+sealed class PromptAction {
+    /** Prompt was fully handled by the interceptor (e.g., replay). Skip event processing. */
+    data object Handled : PromptAction()
+    /** Run the real prompt but capture all broadcast messages. [realPromptText] is sent to the agent. */
+    data class Capture(val realPromptText: String) : PromptAction()
+    /** Proceed with normal prompt processing (no interception). */
+    data object Normal : PromptAction()
+}
+
+/**
+ * Intercepts prompt commands (e.g., /simulate, /capture) before normal event processing.
+ * Called with the trimmed prompt text and session. Returns a [PromptAction].
+ */
+typealias PromptInterceptor = suspend (command: String, session: GatewaySession) -> PromptAction
+
+/**
+ * Called after capture mode completes with the collected (delayMs, message) pairs.
+ * Implementations typically serialize and save the data to a file.
+ */
+typealias CaptureCallback = suspend (captured: List<Pair<Long, WsMessage>>, session: GatewaySession) -> Unit
 
 // ---- ACP SDK → shared enum mappings ----
 
@@ -98,8 +114,25 @@ internal fun extractToolContent(content: List<ToolCallContent>?): ToolContent? {
     return ToolContent(text = text, images = images.ifEmpty { null })
 }
 
+private val extToLang = mapOf(
+    "kt" to "kotlin", "kts" to "kotlin", "java" to "java", "py" to "python",
+    "js" to "javascript", "jsx" to "javascript", "ts" to "typescript", "tsx" to "typescript",
+    "rs" to "rust", "go" to "go", "rb" to "ruby", "sh" to "bash", "bash" to "bash",
+    "json" to "json", "yaml" to "yaml", "yml" to "yaml", "xml" to "xml",
+    "html" to "html", "css" to "css", "scss" to "scss", "sql" to "sql",
+    "md" to "markdown", "toml" to "toml", "gradle" to "groovy", "groovy" to "groovy",
+    "c" to "c", "h" to "c", "cpp" to "cpp", "cc" to "cpp", "cs" to "csharp",
+    "swift" to "swift", "graphql" to "graphql",
+)
+
 internal fun renderDiffMarkdown(path: String, oldText: String?, newText: String): String {
-    val oldLines = oldText?.lines() ?: emptyList()
+    // New file: render as language-fenced code block for syntax highlighting
+    if (oldText == null) {
+        val ext = path.substringAfterLast('.', "").lowercase()
+        val lang = extToLang[ext] ?: ""
+        return "```$lang\n$newText\n```"
+    }
+    val oldLines = oldText.lines()
     val newLines = newText.lines()
     val patch = DiffUtils.diff(oldLines, newLines)
     val fileName = path.substringAfterLast('/')
@@ -151,6 +184,8 @@ suspend fun handleChatChannels(
     internalCommands: List<CommandInfo> = emptyList(),
     availableAgents: List<AgentInfo> = emptyList(),
     currentAgentId: String? = null,
+    promptInterceptor: PromptInterceptor? = null,
+    captureCallback: CaptureCallback? = null,
 ) {
     while (!session.ready) {
         delay(100)
@@ -158,10 +193,7 @@ suspend fun handleChatChannels(
 
     // Seed internal commands on first connect (idempotent — same list every time)
     if (session.internalCommands.isEmpty()) {
-        session.internalCommands = buildList {
-            if (debug) add(CommandInfo("simulate", "Run a simulated agent response for UI testing"))
-            addAll(internalCommands)
-        }
+        session.internalCommands = internalCommands
     }
 
     // Check for ResumeFrom as first message (with short timeout)
@@ -276,17 +308,17 @@ suspend fun handleChatChannels(
 
         if (autoPromptText != null) {
             session.promptJob = session.scope.launch {
-                handlePrompt(WsMessage.Prompt(autoPromptText), session, debug)
+                handlePrompt(WsMessage.Prompt(autoPromptText), session, debug, promptInterceptor = promptInterceptor, captureCallback = captureCallback)
             }
         }
 
         // Process any message that was read during ResumeFrom check
         if (pendingMessage != null) {
-            handleClientMessage(pendingMessage, session, debug, commandHandler, output)
+            handleClientMessage(pendingMessage, session, debug, commandHandler, output, promptInterceptor, captureCallback)
         }
 
         for (wsMsg in input) {
-            handleClientMessage(wsMsg, session, debug, commandHandler, output)
+            handleClientMessage(wsMsg, session, debug, commandHandler, output, promptInterceptor, captureCallback)
         }
     } finally {
         session.connections.remove(output)
@@ -304,6 +336,8 @@ suspend fun WebSocketSession.handleChatWebSocket(
     debug: Boolean = false,
     commandHandler: CommandHandler? = null,
     internalCommands: List<CommandInfo> = emptyList(),
+    promptInterceptor: PromptInterceptor? = null,
+    captureCallback: CaptureCallback? = null,
 ) {
     val output = Channel<WsMessage>(Channel.UNLIMITED)
     val input = Channel<WsMessage>(Channel.UNLIMITED)
@@ -336,7 +370,8 @@ suspend fun WebSocketSession.handleChatWebSocket(
         // Run the core channel-based handler
         launch {
             try {
-                handleChatChannels(input, output, session, manager, autoPromptText, debug, commandHandler, internalCommands)
+                handleChatChannels(input, output, session, manager, autoPromptText, debug, commandHandler, internalCommands,
+                    promptInterceptor = promptInterceptor, captureCallback = captureCallback)
             } finally {
                 output.close()
             }
@@ -350,11 +385,13 @@ private suspend fun handleClientMessage(
     debug: Boolean,
     commandHandler: CommandHandler?,
     output: SendChannel<WsMessage>,
+    promptInterceptor: PromptInterceptor? = null,
+    captureCallback: CaptureCallback? = null,
 ) {
     when (wsMsg) {
         is WsMessage.Prompt -> {
             logger.info("Received prompt: screenshot={}, files={}", wsMsg.screenshot != null, wsMsg.files.size)
-            session.promptJob = session.scope.launch { handlePrompt(wsMsg, session, debug, commandHandler) }
+            session.promptJob = session.scope.launch { handlePrompt(wsMsg, session, debug, commandHandler, promptInterceptor, captureCallback) }
         }
         is WsMessage.Cancel -> {
             session.cancelPrompt()
@@ -402,12 +439,11 @@ private suspend fun handlePrompt(
     session: GatewaySession,
     debug: Boolean = false,
     commandHandler: CommandHandler? = null,
+    promptInterceptor: PromptInterceptor? = null,
+    captureCallback: CaptureCallback? = null,
 ) {
     session.promptMutex.withLock {
     try {
-        session.store.setPromptStartTime(session.id, System.currentTimeMillis())
-        session.store.clearToolCalls(session.id)
-
         val effectivePrompt = if (commandHandler != null && prompt.text.trim().startsWith("/")) {
             commandHandler(prompt, session) ?: prompt
         } else {
@@ -418,11 +454,39 @@ private suspend fun handlePrompt(
         val fileNames = prompt.files.map { it.name } + prompt.resourceLinks.map { it.name }
         session.broadcast(WsMessage.UserMessage(prompt.text, fileNames = fileNames))
 
-        val simulateCmd = effectivePrompt.text.trim()
-        val events = if (debug && simulateCmd.startsWith("/simulate")) {
-            buildSimulationResponse(clientOps = session.clientOps, fast = simulateCmd.contains("fast"))()
+        val command = effectivePrompt.text.trim()
+
+        // Check prompt interceptor (handles /simulate, /capture, etc.)
+        val action = if (promptInterceptor != null) {
+            promptInterceptor(command, session)
         } else {
-            session.prompt(effectivePrompt.text, effectivePrompt.screenshot, effectivePrompt.files, effectivePrompt.resourceLinks)
+            PromptAction.Normal
+        }
+
+        // Interceptor fully handled the prompt (e.g., replay)
+        if (action is PromptAction.Handled) {
+            return@withLock
+        }
+
+        session.store.setPromptStartTime(session.id, System.currentTimeMillis())
+        session.store.clearToolCalls(session.id)
+
+        // Set up capture listener if requested
+        val captureData = if (action is PromptAction.Capture) {
+            mutableListOf<Pair<Long, WsMessage>>().also { list ->
+                var lastTime = System.currentTimeMillis()
+                session.captureListener = { msg ->
+                    val now = System.currentTimeMillis()
+                    list.add(Pair(now - lastTime, msg))
+                    lastTime = now
+                }
+            }
+        } else null
+
+        val events = when (action) {
+            is PromptAction.Capture -> session.prompt(action.realPromptText, effectivePrompt.screenshot, effectivePrompt.files, effectivePrompt.resourceLinks)
+            is PromptAction.Normal -> session.prompt(effectivePrompt.text, effectivePrompt.screenshot, effectivePrompt.files, effectivePrompt.resourceLinks)
+            is PromptAction.Handled -> error("unreachable")
         }
         val responseText = StringBuilder()
         val thoughtText = StringBuilder()
@@ -615,14 +679,23 @@ private suspend fun handlePrompt(
         session.store.setPromptStartTime(session.id, 0L)
         session.store.clearTurnState(session.id)
         session.broadcast(WsMessage.TurnComplete(stopReason ?: "end_turn"))
+
+        // Save captured simulation data if capture mode was active
+        if (captureData != null) {
+            session.captureListener = null
+            captureCallback?.invoke(captureData, session)
+        }
+
         session.clearTurnBuffer()
     } catch (e: CancellationException) {
+        session.captureListener = null
         session.store.clearToolCalls(session.id)
         session.store.setPromptStartTime(session.id, 0L)
         session.store.clearTurnState(session.id)
         session.clearTurnBuffer()
         throw e
     } catch (e: Exception) {
+        session.captureListener = null
         session.store.clearToolCalls(session.id)
         session.store.setPromptStartTime(session.id, 0L)
         session.store.clearTurnState(session.id)

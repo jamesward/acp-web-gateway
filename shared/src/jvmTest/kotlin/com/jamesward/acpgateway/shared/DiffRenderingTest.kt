@@ -29,8 +29,10 @@ class DiffRenderingTest {
     @Test
     fun newFileNoOldText() {
         val result = renderDiffMarkdown("new.kt", null, "val x = 1\nval y = 2")
-        assertTrue(result.contains("+val x = 1"))
-        assertTrue(result.contains("+val y = 2"))
+        assertTrue(result.startsWith("```kotlin\n"), "New file should use language-fenced code block")
+        assertTrue(result.contains("val x = 1"), "Should contain raw content without + prefix")
+        assertTrue(result.contains("val y = 2"))
+        assertTrue(result.endsWith("\n```"), "Should end with code fence")
     }
 
     @Test

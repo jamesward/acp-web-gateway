@@ -1,29 +1,27 @@
 package com.jamesward.acpgateway.server
 
-import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.server.application.*
-import io.ktor.server.html.*
-import io.ktor.server.http.content.*
-import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.response.*
 import com.jamesward.acpgateway.shared.*
 import dev.kilua.rpc.applyRoutes
 import dev.kilua.rpc.initRpc
 import dev.kilua.rpc.registerService
-import io.ktor.server.routing.*
+import io.ktor.http.*
+import io.ktor.server.application.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
+import io.ktor.server.html.*
+import io.ktor.server.http.content.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
-import io.ktor.websocket.Frame
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.consumeEach
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -37,6 +35,8 @@ class RelaySession(val sessionId: UUID) {
     var agentId: String? = null
     @Volatile
     var switchInProgress: Boolean = false
+    @Volatile
+    var turnActive: Boolean = false
     val frontendConnections: MutableSet<WebSocketSession> = ConcurrentHashMap.newKeySet()
     /** Typed channels for RPC clients bridging to this relay (used by ChatServiceImpl). */
     val rpcChannels: MutableSet<SendChannel<WsMessage>> = ConcurrentHashMap.newKeySet()
@@ -49,7 +49,8 @@ fun Application.module(
     registry: List<RegistryAgent>,
     debug: Boolean = false,
     dev: Boolean = false,
-    onReload: () -> Unit = {},
+    relaySessions: ConcurrentHashMap<UUID, RelaySession> = ConcurrentHashMap(),
+    onSessionCountChanged: (() -> Unit)? = null,
 ) {
     install(WebSockets) {
         pingPeriod = 15.seconds
@@ -57,14 +58,12 @@ fun Application.module(
         maxFrameSize = Long.MAX_VALUE
     }
 
-    val relaySessions = ConcurrentHashMap<UUID, RelaySession>()
-
     initRpc {
         registerService<IChatService> { call, _ ->
             val sessionId = call.parameters["sessionId"]?.let {
                 try { UUID.fromString(it) } catch (_: Exception) { null }
             }
-            ChatServiceImpl(registry, debug, sessionId,
+            ChatServiceImpl(registry, sessionId,
                 relayLookup = { id -> relaySessions[id] })
         }
     }
@@ -128,6 +127,7 @@ fun Application.module(
                 relay.agentId = agentParam
             }
             logger.info("CLI agent connected for relay session {}", sessionId)
+            onSessionCountChanged?.invoke()
 
             try {
                 incoming.consumeEach { frame ->
@@ -144,22 +144,32 @@ fun Application.module(
                             }
                         }
                         relay.frontendConnections.removeAll(dead.toSet())
-                        // Forward to RPC channel listeners (browser via Kilua RPC)
-                        if (relay.rpcChannels.isNotEmpty()) {
-                            try {
-                                val msg = Json.decodeFromString(WsMessage.serializer(), text)
-                                val deadChannels = mutableListOf<SendChannel<WsMessage>>()
-                                for (ch in relay.rpcChannels) {
-                                    try {
-                                        ch.trySend(msg)
-                                    } catch (_: Exception) {
-                                        deadChannels.add(ch)
-                                    }
-                                }
-                                relay.rpcChannels.removeAll(deadChannels.toSet())
-                            } catch (_: Exception) {
-                                // Ignore decode failures
+                        // Decode the message to track turn state and forward to RPC channels
+                        val msg = try {
+                            Json.decodeFromString(WsMessage.serializer(), text)
+                        } catch (_: Exception) { null }
+
+                        // Track turn state so late-joining clients know if agent is working
+                        if (msg != null) {
+                            when (msg) {
+                                is WsMessage.TurnComplete -> relay.turnActive = false
+                                is WsMessage.AgentText, is WsMessage.AgentThought,
+                                is WsMessage.ToolCall, is WsMessage.PermissionRequest -> relay.turnActive = true
+                                else -> {}
                             }
+                        }
+
+                        // Forward to RPC channel listeners (browser via Kilua RPC)
+                        if (msg != null && relay.rpcChannels.isNotEmpty()) {
+                            val deadChannels = mutableListOf<SendChannel<WsMessage>>()
+                            for (ch in relay.rpcChannels) {
+                                try {
+                                    ch.trySend(msg)
+                                } catch (_: Exception) {
+                                    deadChannels.add(ch)
+                                }
+                            }
+                            relay.rpcChannels.removeAll(deadChannels.toSet())
                         }
                     }
                 }
@@ -174,6 +184,7 @@ fun Application.module(
                     }
                     relaySessions.remove(sessionId)
                     logger.info("CLI agent disconnected from relay session {}", sessionId)
+                    onSessionCountChanged?.invoke()
                 }
             }
         }
@@ -228,21 +239,6 @@ fun Application.module(
             call.respondText("ok", ContentType.Text.Plain)
         }
 
-        get("/api/sessions/count") {
-            call.respondText(relaySessions.size.toString(), ContentType.Text.Plain)
-        }
-
-        if (dev) {
-            post("/reload") {
-                call.respondText("reloading", ContentType.Text.Plain)
-                Thread({
-                    Thread.sleep(200)
-                    logger.info("Reload requested — shutting down")
-                    onReload()
-                }, "reload-shutdown").start()
-            }
-        }
-
         staticResources("/static", "static")
     }
 }
@@ -251,6 +247,7 @@ data class ServerConfig(
     val port: Int,
     val debug: Boolean,
     val dev: Boolean,
+    val shutdownOnIdle: Boolean = false,
 )
 
 fun parseServerConfig(args: Array<String>): ServerConfig {
@@ -258,35 +255,104 @@ fun parseServerConfig(args: Array<String>): ServerConfig {
         port = parsePort(args),
         debug = args.contains("--debug"),
         dev = args.contains("--dev"),
+        shutdownOnIdle = args.contains("--shutdown-on-idle"),
     )
+}
+
+/**
+ * Monitors relay session count and triggers server shutdown after a grace period of inactivity.
+ * Used when the server is started with --shutdown-on-idle (e.g., by the CLI in Docker mode).
+ */
+class IdleShutdownMonitor(
+    private val relaySessions: ConcurrentHashMap<UUID, RelaySession>,
+    private val gracePeriod: Duration = 30.seconds,
+    private val startupGracePeriod: Duration = 120.seconds,
+    private val onShutdown: () -> Unit,
+) {
+    private val logger = LoggerFactory.getLogger("IdleShutdownMonitor")
+    private val scope = CoroutineScope(Dispatchers.Default)
+    private var timerJob: Job? = null
+    private var hasHadSession = false
+
+    @Synchronized
+    fun onSessionCountChanged() {
+        if (relaySessions.isNotEmpty()) {
+            hasHadSession = true
+            cancelTimer()
+        } else {
+            startTimer()
+        }
+    }
+
+    private fun startTimer() {
+        if (timerJob != null) return
+        val delay = if (hasHadSession) gracePeriod else startupGracePeriod
+        logger.info("No active sessions — will shut down in {}", delay)
+        timerJob = scope.launch {
+            delay(delay)
+            if (relaySessions.isEmpty()) {
+                logger.info("Idle timeout reached with no sessions — shutting down")
+                Thread({ onShutdown() }, "idle-shutdown").start()
+            }
+        }
+    }
+
+    private fun cancelTimer() {
+        timerJob?.cancel()
+        timerJob = null
+    }
+
+    fun close() {
+        cancelTimer()
+        scope.cancel()
+    }
 }
 
 /**
  * Starts the proxy-only server. Blocks the calling thread until shutdown.
  */
 fun startServer(config: ServerConfig) {
-    logger.info("Starting ACP Web Gateway (proxy mode, port={}, debug={}, dev={})",
-        config.port, config.debug, config.dev)
+    logger.info("Starting ACP Web Gateway (proxy mode, port={}, debug={}, dev={}, shutdownOnIdle={})",
+        config.port, config.debug, config.dev, config.shutdownOnIdle)
 
     val registry = runBlocking { fetchRegistry() }
 
+    val relaySessions = ConcurrentHashMap<UUID, RelaySession>()
+
     lateinit var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>
+
+    val idleMonitor = if (config.shutdownOnIdle) {
+        val graceSec = System.getenv("IDLE_GRACE_SECONDS")?.toLongOrNull()
+        val startupGraceSec = System.getenv("IDLE_STARTUP_GRACE_SECONDS")?.toLongOrNull()
+        IdleShutdownMonitor(
+            relaySessions,
+            gracePeriod = graceSec?.seconds ?: 30.seconds,
+            startupGracePeriod = startupGraceSec?.seconds ?: 120.seconds,
+        ) {
+            logger.info("Shutdown-on-idle triggered — stopping server")
+            server.stop(100, 500)
+            Runtime.getRuntime().halt(0)
+        }
+    } else null
+
     server = embeddedServer(CIO, configure = {
         connector {
             this.port = config.port
         }
     }) {
         module(registry, config.debug, config.dev,
-            onReload = {
-                server.stop(100, 500)
-                Runtime.getRuntime().halt(0)
-            },
+            relaySessions = relaySessions,
+            onSessionCountChanged = idleMonitor?.let { { it.onSessionCountChanged() } },
         )
     }
     server.start(wait = false)
 
+    // Start idle timer if no sessions exist at startup
+    idleMonitor?.onSessionCountChanged()
+
     Runtime.getRuntime().addShutdownHook(Thread({
         logger.info("Shutdown hook — stopping server")
+        idleMonitor?.close()
         server.stop(100, 500)
     }, "shutdown-hook"))
 

@@ -1,6 +1,9 @@
 package com.jamesward.acpgateway.server
 
-import com.jamesward.acpgateway.shared.*
+import com.jamesward.acpgateway.shared.AgentInfo
+import com.jamesward.acpgateway.shared.IChatService
+import com.jamesward.acpgateway.shared.RegistryAgent
+import com.jamesward.acpgateway.shared.WsMessage
 import io.ktor.websocket.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -9,14 +12,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
-import java.util.UUID
+import java.util.*
 
 private val relayJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 private val logger = LoggerFactory.getLogger("ChatServiceImpl")
 
 class ChatServiceImpl(
     private val registry: List<RegistryAgent>,
-    private val debug: Boolean,
     private val sessionId: UUID?,
     private val relayLookup: ((UUID) -> RelaySession?)? = null,
 ) : IChatService {
@@ -84,8 +86,14 @@ class ChatServiceImpl(
             var hasAvailableAgents = false
             for (cached in relay.messageCache) {
                 try {
-                    val msg = relayJson.decodeFromString(WsMessage.serializer(), cached)
-                    if (msg is WsMessage.Connected) hasConnected = true
+                    var msg = relayJson.decodeFromString(WsMessage.serializer(), cached)
+                    if (msg is WsMessage.Connected) {
+                        hasConnected = true
+                        // Override agentWorking if a turn is currently active
+                        if (relay.turnActive && !msg.agentWorking) {
+                            msg = msg.copy(agentWorking = true)
+                        }
+                    }
                     if (msg is WsMessage.AvailableAgents) hasAvailableAgents = true
                     output.send(msg)
                 } catch (e: Exception) {
@@ -101,7 +109,7 @@ class ChatServiceImpl(
                 } else {
                     "No agent selected"
                 }
-                output.send(WsMessage.Connected(agentName, "", agentWorking = false))
+                output.send(WsMessage.Connected(agentName, "", agentWorking = relay.turnActive))
             }
 
             // The CLI doesn't send AvailableAgents (it has no registry).

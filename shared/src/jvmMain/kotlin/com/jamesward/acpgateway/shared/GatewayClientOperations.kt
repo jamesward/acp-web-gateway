@@ -7,7 +7,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.JsonElement
 import org.slf4j.LoggerFactory
 import java.io.File
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
 data class PendingPermission(

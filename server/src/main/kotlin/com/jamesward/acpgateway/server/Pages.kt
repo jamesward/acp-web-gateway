@@ -160,7 +160,7 @@ fun HTML.landingPage(agentName: String) {
                     acp2web
                     
                     # Or, start with an agent from the ACP registry, like:
-                    acp2web --agent claude-code
+                    acp2web --agent claude-acp
 
                     # Or use a custom agent command, like:
                     acp2web --agent-command "kiro-cli acp"
@@ -186,7 +186,7 @@ fun HTML.landingPage(agentName: String) {
                     acp2web --remote
                     
                     # Or start with the default remote and specify the agent, like:
-                    acp2web --remote --agent claude-code
+                    acp2web --remote --agent claude-acp
 
                     # Or specify your own server
                     acp2web --remote https://my-server.com
@@ -214,7 +214,7 @@ fun HTML.landingPage(agentName: String) {
                 a(href = "https://agentclientprotocol.com/get-started/registry") { +"ACP agent registry" }
                 +". Examples:"
             }
-            pre { code { +"""acp2web --agent claude-code
+            pre { code { +"""acp2web --agent claude-acp
 acp2web --agent github-copilot-cli""" } }
 
             h3 { +"Custom Command" }

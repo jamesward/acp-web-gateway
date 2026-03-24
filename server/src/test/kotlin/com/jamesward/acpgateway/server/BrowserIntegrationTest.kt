@@ -21,13 +21,8 @@ import org.junit.BeforeClass
 import org.testcontainers.Testcontainers
 import java.net.ServerSocket
 import java.nio.file.Files
-import java.util.UUID
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import java.util.*
+import kotlin.test.*
 
 class BrowserIntegrationTest {
 

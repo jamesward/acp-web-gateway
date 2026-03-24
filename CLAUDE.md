@@ -40,7 +40,7 @@ This project can be used to work on itself. In which case, running build tasks c
 ./gradlew :server:run
 
 # Run dev server with in-process agent (test classpath)
-./gradlew :server:runDev --args="--agent claude-code --debug"
+./gradlew :server:runDev --args="--agent claude-acp --debug"
 
 # Run dev server in restart loop (for triggerable reloads)
 ./gradlew :server:devRun -Pargs="--agent github-copilot-cli --debug"
@@ -64,7 +64,7 @@ This project can be used to work on itself. In which case, running build tasks c
 
 The server's `processResources` task automatically runs `:web:wasmJsBrowserDevelopmentWebpack` and copies WASM output to `server/build/resources/main/static/`.
 
-**Port conflicts**: The user often runs the gateway server locally on port 8080 while working on this project. If you need to start the server for testing, use a different port via `--port` flag or `PORT` env var: `PORT=8081 ./gradlew :server:run --args="--agent claude-code"`. For compile-only verification (preferred), use the compile commands above instead.
+**Port conflicts**: The user often runs the gateway server locally on port 8080 while working on this project. If you need to start the server for testing, use a different port via `--port` flag or `PORT` env var: `PORT=8081 ./gradlew :server:run --args="--agent claude-acp"`. For compile-only verification (preferred), use the compile commands above instead.
 
 **NEVER run `./gradlew --stop`**: This project is often used to work on itself — the user's main gateway server runs as a Gradle task. Running `./gradlew --stop` kills all Gradle daemons including the user's active server, losing the current task session. If you encounter a stale Gradle daemon issue, use `--no-daemon` for your specific build command instead.
 
@@ -77,7 +77,7 @@ To test UI changes in a real browser without needing a real ACP agent, use the s
 PORT=8081 ./gradlew :server:runDev --args="--agent simulate --debug"
 ```
 
-This starts the full dev server (Kilua RPC, static assets, etc.) with a `ReplayableFakeClientSession` that returns canned simulation data. The simulation includes text streaming, thinking blocks, tool calls, image content blocks, and other UI scenarios.
+This starts the full dev server (Kilua RPC, static assets, etc.) with a fake agent session. Use `/simulate-default` to replay canned simulation data (thinking, tool calls, images, text streaming) from JSON files in `server/src/test/resources/simulations/`.
 
 **Testing workflow with Chrome DevTools MCP**:
 1. Start the simulated server in the background on a non-conflicting port (e.g., 8081)
@@ -115,7 +115,7 @@ This starts the full dev server (Kilua RPC, static assets, etc.) with a `Replaya
      - Kill the test server: find PID via `ss -tlnp | grep <port>` then `kill <pid>`
      - Navigate the Chrome page to `about:blank` so it doesn't interfere with the main UI
 
-  **`/simulate` command** (debug mode only): Type `/simulate` as a prompt to trigger a canned simulation response with thinking, tool calls, images, permission requests, and text streaming. Use `/simulate fast` to skip all delays and get the full response instantly — useful for quickly verifying UI rendering without waiting. The `--agent simulate` startup mode always uses slow (realistic) timing for user-facing demos.
+  **`/simulate-default` command** (debug mode only): Type `/simulate-default` to replay the default simulation (thinking, tool calls, images, text streaming). Use `/simulate-default fast` for 1ms pacing instead of 100ms. Other captured simulations are available via `/simulate-<name>` (e.g., `/simulate-plan`). Use `/capture <prompt>` to record a real agent interaction for future replay.
 
   **Important**: Do NOT kill port 8080 — that's the user's main server.
 

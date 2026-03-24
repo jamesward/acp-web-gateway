@@ -1,6 +1,6 @@
 package com.jamesward.acpgateway.server
-import com.jamesward.acpgateway.shared.*
 
+import com.jamesward.acpgateway.shared.GatewaySession
 import com.jamesward.acpgateway.shared.WsMessage
 import com.microsoft.playwright.Browser
 import com.microsoft.playwright.Page
@@ -9,7 +9,7 @@ import io.orangebuffalo.testcontainers.playwright.PlaywrightContainer
 import org.slf4j.LoggerFactory
 import org.testcontainers.Testcontainers
 import java.io.Closeable
-import java.util.Base64
+import java.util.*
 
 /**
  * Manages a Playwright browser container that points at the server's own web UI.

@@ -20,7 +20,6 @@ import web.console.console
 import web.dom.document
 import web.file.File
 import web.html.HTMLCanvasElement
-import web.keyboard.KeyboardEvent
 import web.location.location
 
 class App : Application() {
@@ -51,6 +50,8 @@ class App : Application() {
 
     // Permission state
     private var permissionRequest by mutableStateOf<WsMessage.PermissionRequest?>(null)
+    private var planFileContent by mutableStateOf<String?>(null)
+    private var lastEditContent: String? = null
 
     // Agent selector state
     private var availableAgents by mutableStateOf(listOf<AgentInfo>())
@@ -205,6 +206,8 @@ class App : Application() {
                     currentResponse = null
                     currentToolCalls = emptyList()
                     currentPlan = null
+                    planFileContent = null
+                    lastEditContent = null
                 }
                 stopStatusTimer()
                 agentWorking = msg.agentWorking
@@ -256,11 +259,21 @@ class App : Application() {
                 } else {
                     currentToolCalls + tc
                 }
+                // Track the last edit tool call content — used for plan display in switch_mode permission dialog
+                if (tc.kind == ToolKind.Edit && tc.content != null) {
+                    lastEditContent = tc.content
+                }
             }
             is WsMessage.PlanUpdate -> {
                 currentPlan = msg.entries
             }
             is WsMessage.PermissionRequest -> {
+                // If this permission is for a switch_mode tool call (e.g. "Ready to code?"),
+                // capture the last edit content as the plan to display in the dialog
+                val associatedTool = currentToolCalls.find { it.id == msg.toolCallId }
+                if (associatedTool?.kind == ToolKind.SwitchMode && lastEditContent != null) {
+                    planFileContent = lastEditContent
+                }
                 permissionRequest = msg
             }
             is WsMessage.PermissionResponse -> {
@@ -464,9 +477,10 @@ class App : Application() {
         // Permission bar (above input, non-blocking so user can see conversation)
         val perm = permissionRequest
         if (perm != null) {
-            permissionDialog(perm) { toolCallId, optionId ->
+            permissionDialog(perm, planFileContent) { toolCallId, optionId ->
                 sendWs(WsMessage.PermissionResponse(toolCallId, optionId))
                 permissionRequest = null
+                planFileContent = null
             }
         }
 
