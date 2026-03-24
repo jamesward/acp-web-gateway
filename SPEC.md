@@ -31,7 +31,7 @@ https://agentclientprotocol.com/
 - When a user joins a session they see the history (kept in memory)
 - Multiple browser connections can view the same session simultaneously
 - Web UI is desktop & mobile friendly with dark theme, smooth scrolling, and auto-collapse of older messages
-- Debug mode (`--debug`) enables a Diagnose button, Screenshot checkbox, Download Log button, and `browser://` virtual file reads for agent self-diagnosis
+- Debug mode (`--debug`) enables Screenshot checkbox and Download Log button
 - Dev mode (`--dev`) enables a Reload button for hot-reload during development
 
 ## Architecture
@@ -93,19 +93,12 @@ Both local and proxy modes support automatic reconnection with no user action re
 #### Browser ↔ Server (Kilua RPC / WebSocket)
 
 1. **Browser connects** via Kilua RPC WebSocket
-2. **On disconnect**, the browser retries with exponential backoff (1s, 2s, 4s, ... capped at 30s). The UI shows a "Reconnecting..." overlay.
+2. **On disconnect**, the browser retries with exponential backoff (1s, 2s, 4s, ... capped at 30s). The header title changes to "Reconnecting…" while disconnected.
 3. **On reconnect**, the browser sends a `ResumeFrom` message with `lastSeq` (the last sequence number it received). The server checks the turn buffer for messages since that sequence.
 4. **Delta resume**: If the turn buffer has messages after `lastSeq`, only those are replayed (efficient catch-up within the current turn).
 5. **Full replay**: If `lastSeq` is too old or zero, the server replays complete chat history from the session store, then current turn state (in-progress thoughts, text, tool calls).
 6. **Pending permission dialogs** are re-sent on reconnect — the server tracks `activePermission` per session.
 7. **Multiple browsers** can connect to the same session. Each tracks its own `lastSeq`. Disconnection of one browser doesn't affect others.
-
-#### CLI ↔ Server (Proxy/Relay Mode)
-
-**[PARTIALLY IMPLEMENTED]** The CLI connects to `wss://<gateway>/s/{sessionId}/agent` and relays messages between the local agent and the remote server. The server caches messages for browser clients. Basic reconnection works (CLI can reconnect and re-register), but full sequence-based delta catch-up for the CLI relay link is not yet implemented:
-
-- **Implemented**: CLI connects and relays, server caches messages for new browser connections, agent switching mid-session, `switchInProgress` flag for CLI reconnect during agent changes.
-- **Not yet implemented**: CLI-side `lastSeq` tracking, CLI-side exponential backoff retry loop, server-to-CLI message replay on reconnect.
 
 #### Message Ordering Guarantees
 
@@ -149,7 +142,7 @@ All UI state is held as `mutableStateOf()` properties on the `App` class. Key st
   - `Error` — Red-bordered message block.
 - **In-progress turn** — Current thought, tool calls, and response render below completed messages with live streaming updates.
 - **Scroll-to-bottom button** — Floating circular button appears when user scrolls up, auto-scroll on new content when at bottom.
-- **Input bar** — File preview chips (removable), slash command autocomplete popup (arrow key / Tab / Escape navigation), textarea with Enter-to-send (Shift+Enter for newline), attach button (file picker), Send/Cancel/Diagnose buttons, Screenshot checkbox and Download Log button (debug mode).
+- **Input bar** — File preview chips (removable), slash command autocomplete popup (arrow key / Tab / Escape navigation), textarea with Enter-to-send (Shift+Enter for newline), attach button (file picker), Send/Cancel buttons, Screenshot checkbox and Download Log button (debug mode).
 - **Permission dialog** — Fixed overlay with title, description, and dynamically rendered option buttons from the agent's permission request.
 
 #### JS Bridge Layer (`@JsFun`)
@@ -176,7 +169,6 @@ The client connects via `getService<IChatService>().chat { sendChannel, receiveC
 - `PermissionRequest` / `PermissionResponse` — Shows/hides permission dialog.
 - `AvailableAgents` — Populates agent selector; auto-shows if no agent selected.
 - `AvailableCommands` — Updates slash command autocomplete list.
-- `BrowserStateRequest` — Collects browser state and sends `BrowserStateResponse` back (for debug mode `browser://` reads).
 - `UserMessage` — Adds user message to history (from server replay).
 - `Error` — Adds error message to conversation.
 
@@ -202,12 +194,8 @@ Downloaded as `chat-log.md` via the `downloadTextFile` JS bridge.
 
 ### Browser Debugging (Debug Mode)
 
-- `browser://console` — Last 50 console log entries (log/warn/error with timestamps)
-- `browser://dom` — DOM state summary (message count, viewport size, permission dialog visibility, page title, body classes, URL)
-- `browser://all` — Both combined as JSON
 - Screenshot checkbox — Captures PNG via html2canvas (renders DOM to canvas, extracts base64 PNG)
 - Download Log button — Downloads full chat log as text file
-- Diagnose button — Cancels current task, collects browser state + session state (elapsed time, active tool calls, pending permissions, recent history), re-sends as diagnostic prompt
 
 ## Technologies
 
@@ -234,56 +222,28 @@ Downloaded as `chat-log.md` via the `downloadTextFile` JS bridge.
 
 ### CI/CD
 
-- **Every push to `main`**: runs tests, builds and pushes the Docker image to ghcr.io with tags `<full-version>` (immutable) and `<protocol-version>` (mutable, e.g., `1`).
-- **Tagged releases** (`v*`): runs tests, builds CLI native binaries for all platforms, builds and pushes Docker image, creates GitHub Release with binaries attached.
-- **Heroku** (acp2web.com): deploys `main` automatically. This is safe because the protocol version is tracked in the code — any CLI can check compatibility via the `/health` endpoint or WebSocket handshake.
+- **Every push to `main`**: runs tests.
+- **Tagged releases** (`v*`): runs tests, builds CLI native binaries for all platforms, builds and pushes Docker image to ghcr.io, creates GitHub Release with binaries attached.
+- **Heroku** (acp2web.com): deploys `main` automatically via Procfile.
 
 ### Running via Docker
 
-The published container `ghcr.io/jamesward/acp-web-gateway` runs in proxy-only mode. The CLI starts it automatically via Docker by default, pulling the latest image matching its protocol version.
+The published container `ghcr.io/jamesward/acp-web-gateway` runs in proxy-only mode. The CLI starts it automatically via Docker by default.
 
 ```bash
 # Manual Docker start (proxy-only mode)
 docker run -d --rm \
   -p 8080:8080 \
-  ghcr.io/jamesward/acp-web-gateway:1
+  ghcr.io/jamesward/acp-web-gateway
 ```
 
 - `-p 8080:8080` — Exposes the gateway on `http://localhost:8080`.
-- `:1` — Protocol version tag. Always the latest image compatible with protocol 1.
 - Add `--debug` for debug mode.
 - The container is a plain JRE image — agents run locally via the CLI, not inside the container.
 
 ## Versioning
 
-### Scheme: `<protocol>.<date>.<seq>`
-
-- **Protocol version** (major): manually bumped integer in `shared/build.gradle.kts`. Only changes on breaking `WsMessage` protocol changes (removed/renamed message types or required fields, changed serialization structure). Adding new message types or optional fields is non-breaking.
-- **Date**: `YYYYMMDD` of the build.
-- **Sequence**: counter for multiple builds on the same day (starts at 1).
-
-Example: `1.20260322.1` — protocol version 1, built March 22 2026, first build that day.
-
-The version is generated at build time by a Gradle task that writes `Version.kt` into the shared module (KMP, visible to JVM + WasmJS). Local dev builds use protocol version + `0.0` (e.g., `1.0.0`).
-
-### Docker image tags
-
-Every CI build (main push or tagged release) pushes the Docker image with:
-- `<full-version>` — immutable tag (e.g., `1.20260322.1`)
-- `<protocol-version>` — mutable tag (e.g., `1`), always points to the latest compatible image
-
-The CLI pulls `ghcr.io/jamesward/acp-web-gateway:<protocol-version>`, so it always gets the newest server compatible with its protocol.
-
-### CLI↔Server protocol check
-
-- CLI sends `&protocol=<protocol-version>` as a query parameter when connecting to the server WebSocket (`/s/{sessionId}/agent`).
-- Server compares with its own protocol version. On mismatch, closes the WebSocket with a descriptive error: `"Protocol mismatch: server=2, cli=1. Please update your CLI."`
-- Dev builds (protocol `0`) skip the check.
-- `/health` endpoint returns `{"status":"ok","version":"<full>","protocol":<int>}`.
-
-### CLI self-update
-
-`acp2web --update` checks the latest GitHub Release, compares versions, and downloads the appropriate platform binary if an update is available.
+Version is derived from git tags via the `com.palantir.git-version` Gradle plugin. Docker images are tagged on release.
 
 ## acp2web CLI
 
@@ -293,12 +253,12 @@ The CLI (`cli/` module) runs the ACP agent locally and connects to a gateway ser
 
 1. CLI checks `~/.acp2web/server.json` for an existing Docker container
 2. If a running container is found (health check passes), reuses it
-3. Otherwise, starts `docker run -d --rm -p <random-port>:8080 ghcr.io/jamesward/acp-web-gateway:<protocol-version>`
+3. Otherwise, starts `docker run -d --rm -p <random-port>:8080 ghcr.io/jamesward/acp-web-gateway --shutdown-on-idle`
 4. Creates a UUID session ID and connects to `ws://localhost:<port>/s/{sessionId}/agent`
 5. Prints the browser URL for the user to open
 6. Spawns the ACP agent locally and relays messages
 
-On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are active, it stops the Docker container and removes the state file.
+The server uses `--shutdown-on-idle` to automatically exit when no sessions are active (grace period of 30s). Docker's `--rm` flag ensures the container is cleaned up.
 
 ### Remote mode (`--remote`)
 
@@ -322,7 +282,11 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
 
 ## Future
 
-- Client/Server protocol versioning
+- Versioning scheme: `<protocol>.<date>.<seq>` with `Version.kt` generated at build time, protocol version constant in `shared/build.gradle.kts`, Docker image tagged with both `<full-version>` and `<protocol-version>`
+- CLI↔Server protocol check: CLI sends `&protocol=<protocol-version>` query parameter, server validates and closes on mismatch, `/health` returns JSON with version/protocol
+- CLI self-update: `acp2web --update` checks GitHub Releases and downloads appropriate platform binary
+- Browser debugging: `browser://` virtual file reads (`browser://console`, `browser://dom`, `browser://all`), `BrowserStateRequest`/`BrowserStateResponse` message types, Diagnose button (collects browser+session state, re-sends as diagnostic prompt)
+- CI: Docker image build/push on every push to `main` (currently only on tagged releases)
 - CLI relay reconnect with exponential backoff and sequence-based catch-up
   - Exponential backoff reconnect on relay WebSocket disconnect
   - Sequence-based delta catch-up on relay reconnect
@@ -331,13 +295,11 @@ On exit, the CLI calls `GET /api/sessions/count`. If no other sessions are activ
 - Additional functionality
   - Skills Directory with SkillsJars
   - MCP servers
-- Autopilot
-  - /autopilot prompt
-  - Have the agent use it's own UI to improve itself, finding more improvements along the way
+- Autopilot (partially implemented: `/autopilot` command in dev/test scope takes a screenshot of its own UI and asks the agent to evaluate it)
+  - Have the agent use its own UI to improve itself iteratively, finding more improvements along the way
 - Build isolation
   - Running `./gradlew compileKotlin` while the server is running causes `NoClassDefFoundError` because the `run` task's classpath points directly to `build/classes/` directories, which get overwritten by compilation
   - Option A: Use `./gradlew :server:runShadow` (already available via Ktor plugin, zero changes, but slower startup due to fat jar build)
   - Option B: Add a custom `runJar` task that depends on the `jar` task and runs from the built jar + dependency jars instead of loose class files (fast, isolated from recompilation)
-- <tool_use_error>Cancelled: parallel tool call WebFetch errored</tool_use_error>
 - Kotlin/Native for CLI once Kotlin ACP has native targets
 - diff rendering in tool call isn't nice

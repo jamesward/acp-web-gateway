@@ -280,6 +280,7 @@ class App : Application() {
                 permissionRequest = null
             }
             is WsMessage.TurnComplete -> {
+                val isHistory = msg.stopReason == "history"
                 val newMessages = mutableListOf<ChatMessage>()
                 newMessages.addAll(messages)
                 currentPlan?.let { entries ->
@@ -299,9 +300,11 @@ class App : Application() {
                 currentResponse = null
                 currentToolCalls = emptyList()
                 currentPlan = null
-                stopStatusTimer()
-                agentWorking = false
-                focusPromptInput()
+                if (!isHistory) {
+                    stopStatusTimer()
+                    agentWorking = false
+                    focusPromptInput()
+                }
             }
             is WsMessage.Error -> {
                 messages = messages + ChatMessage.Error(msg.message)

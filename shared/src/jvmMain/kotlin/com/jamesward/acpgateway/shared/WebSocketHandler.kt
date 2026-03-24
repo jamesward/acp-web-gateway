@@ -257,7 +257,7 @@ suspend fun handleChatChannels(
                     if (entry.content.isNotEmpty()) {
                         output.send(WsMessage.AgentText(msgId = "history-${entry.timestamp}", markdown = entry.content, usage = entry.usage))
                     }
-                    output.send(WsMessage.TurnComplete("end_turn"))
+                    output.send(WsMessage.TurnComplete("history"))
                 }
             }
 

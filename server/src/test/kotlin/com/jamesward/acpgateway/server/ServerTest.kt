@@ -14,6 +14,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import java.util.*
 import kotlin.test.*
@@ -486,6 +487,55 @@ class ServerTest {
         assertIs<WsMessage.AvailableAgents>(agents)
         assertEquals("test-agent", agents.currentAgentId)
         assertEquals("https://example.com/icon.png", agents.agents.first().icon)
+
+        input.close()
+        job.join()
+    }
+
+    @Test
+    fun proxyModeRelaySecondClientPreservesAvailableCommands() = runTest {
+        val sessionId = UUID.randomUUID()
+        val relay = RelaySession(sessionId)
+        relay.agentId = "test-agent"
+
+        // Simulate CLI having sent Connected + AvailableCommands with real commands
+        val connectedMsg = WsMessage.Connected("Test Agent", "1.0.0", agentWorking = false)
+        val commandsMsg = WsMessage.AvailableCommands(listOf(
+            CommandInfo("plan", "Create a plan"),
+            CommandInfo("help", "Show help"),
+        ))
+        relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(), connectedMsg))
+        relay.messageCache.add(testJson.encodeToString(WsMessage.serializer(), commandsMsg))
+
+        val registry = listOf(RegistryAgent(id = "test-agent", name = "Test Agent", version = "1.0.0"))
+
+        val impl = ChatServiceImpl(
+            registry, sessionId,
+            relayLookup = { if (it == sessionId) relay else null },
+        )
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val job = launch { impl.chat(input, output) }
+
+        // Collect all initial messages until we stop receiving
+        val msgs = mutableListOf<WsMessage>()
+        while (true) {
+            val msg = withTimeoutOrNull(500) { output.receive() } ?: break
+            msgs.add(msg)
+        }
+
+        // Find all AvailableCommands messages
+        val commandsMsgs = msgs.filterIsInstance<WsMessage.AvailableCommands>()
+        assertTrue(commandsMsgs.isNotEmpty(), "Should have at least one AvailableCommands")
+
+        // The LAST AvailableCommands seen by the client determines what's shown
+        val lastCommands = commandsMsgs.last()
+        assertEquals(2, lastCommands.commands.size,
+            "Second client should see the CLI's commands, not an empty list. Got: ${commandsMsgs.map { it.commands.size }}")
+        assertEquals("plan", lastCommands.commands[0].name)
+        assertEquals("help", lastCommands.commands[1].name)
 
         input.close()
         job.join()

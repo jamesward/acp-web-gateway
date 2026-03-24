@@ -84,6 +84,7 @@ class ChatServiceImpl(
             // Replay cached messages
             var hasConnected = false
             var hasAvailableAgents = false
+            var hasAvailableCommands = false
             for (cached in relay.messageCache) {
                 try {
                     var msg = relayJson.decodeFromString(WsMessage.serializer(), cached)
@@ -94,7 +95,12 @@ class ChatServiceImpl(
                             msg = msg.copy(agentWorking = true)
                         }
                     }
+                    // Mark completed-turn TurnComplete as "history" so client doesn't reset agentWorking
+                    if (msg is WsMessage.TurnComplete && relay.turnActive && msg.stopReason != "history") {
+                        msg = msg.copy(stopReason = "history")
+                    }
                     if (msg is WsMessage.AvailableAgents) hasAvailableAgents = true
+                    if (msg is WsMessage.AvailableCommands) hasAvailableCommands = true
                     output.send(msg)
                 } catch (e: Exception) {
                     logger.warn("Failed to decode cached relay message: {}", e.message)
@@ -119,7 +125,9 @@ class ChatServiceImpl(
                     agents = registry.map { AgentInfo(it.id, it.name, it.icon, it.description) },
                     currentAgentId = relay.agentId,
                 ))
-                output.send(WsMessage.AvailableCommands(emptyList()))
+                if (!hasAvailableCommands) {
+                    output.send(WsMessage.AvailableCommands(emptyList()))
+                }
             }
 
             // Bidirectional forwarding — when either side closes, terminate the other

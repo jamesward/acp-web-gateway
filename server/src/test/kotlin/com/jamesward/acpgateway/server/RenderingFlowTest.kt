@@ -399,6 +399,108 @@ class RenderingFlowTest {
         handler2.cancel()
     }
 
+    // ---- Second client during active turn sees agentWorking=true ----
+
+    @Test
+    fun secondClientDuringActiveTurnSeesAgentWorking() = runTest {
+        val command = ProcessCommand("echo", listOf("test"))
+        val manager = AgentProcessManager(command, System.getProperty("user.dir"))
+        val fakeSession = ControllableFakeClientSession()
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val testStore = InMemorySessionStore()
+        val session = GatewaySession(
+            id = java.util.UUID.randomUUID(),
+            clientSession = fakeSession,
+            clientOps = GatewayClientOperations(),
+            cwd = System.getProperty("user.dir"),
+            scope = testScope,
+            store = testStore,
+        )
+        session.ready = true
+        session.startEventForwarding()
+        manager.sessions[session.id] = session
+        manager.agentName = "test-agent"
+        manager.agentVersion = "1.0.0"
+
+        // First turn: complete a prompt to create history
+        fakeSession.enqueueTextResponse("First answer")
+
+        val input1 = Channel<WsMessage>(Channel.UNLIMITED)
+        val output1 = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val handler1 = launch {
+            handleChatChannels(input1, output1, session, manager)
+        }
+
+        output1.receive() // Connected
+
+        input1.send(WsMessage.Prompt("first question"))
+        output1.collectUntilTurnComplete()
+
+        // Second turn: start a prompt that stays in-progress
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fakeSession.enqueueResponse {
+            flow {
+                emit(Event.SessionUpdateEvent(SessionUpdate.AgentMessageChunk(ContentBlock.Text("Working..."))))
+                gate.await()
+                emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            }
+        }
+
+        input1.send(WsMessage.Prompt("second question"))
+
+        // Wait for the in-progress AgentText to arrive
+        for (msg in output1) {
+            if (msg is WsMessage.AgentText) break
+        }
+
+        // Now connect a second client while the turn is active
+        val input2 = Channel<WsMessage>(Channel.UNLIMITED)
+        val output2 = Channel<WsMessage>(Channel.UNLIMITED)
+
+        val handler2 = launch {
+            handleChatChannels(input2, output2, session, manager)
+        }
+
+        // Collect all messages from the second client's replay
+        val replayMsgs = mutableListOf<WsMessage>()
+        val connected = output2.receive()
+        assertIs<WsMessage.Connected>(connected)
+        assertTrue(connected.agentWorking, "Connected should report agentWorking=true")
+
+        // Collect remaining replay messages (history + in-progress state)
+        // Replay order: UserMessage("first question"), AgentText("First answer"), TurnComplete("history"),
+        //               UserMessage("second question"), AgentText("Working...")
+        // We need to collect past the history TurnComplete to the in-progress AgentText
+        var seenTurnComplete = false
+        for (msg in output2) {
+            replayMsgs.add(msg)
+            if (msg is WsMessage.TurnComplete) seenTurnComplete = true
+            // Stop after seeing TurnComplete AND then an AgentText (the in-progress content)
+            if (seenTurnComplete && msg is WsMessage.AgentText) break
+        }
+
+        // History TurnComplete should have "history" stop reason, not "end_turn"
+        val historyTurnCompletes = replayMsgs.filterIsInstance<WsMessage.TurnComplete>()
+        assertTrue(historyTurnCompletes.isNotEmpty(), "Should have history TurnComplete")
+        for (tc in historyTurnCompletes) {
+            assertEquals("history", tc.stopReason,
+                "History TurnComplete should use 'history' stop reason so client doesn't reset agentWorking")
+        }
+
+        // The second client should have received in-progress content after the history
+        val textsAfterTurnComplete = replayMsgs.dropWhile { it !is WsMessage.TurnComplete }
+            .filterIsInstance<WsMessage.AgentText>()
+        assertTrue(textsAfterTurnComplete.isNotEmpty(), "Should replay in-progress AgentText after history")
+
+        // Release the gate and clean up
+        gate.complete(Unit)
+        input1.close()
+        handler1.cancel()
+        input2.close()
+        handler2.cancel()
+    }
+
     // ---- Failed tool call ----
 
     @Test

@@ -168,6 +168,7 @@ Do NOT fix UI bugs without a test. If you can't write a test first, explain why 
 - Requires `@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)`.
 - WASM webpack dev output path: `build/kotlin-webpack/wasmJs/developmentExecutable/` (NOT `build/dist/...`).
 - `web.dom.document` from kotlin-browser used only for reading body data attributes at startup.
+- **Incremental compilation bug**: The Kotlin/WASM incremental compiler can fail with `ArrayIndexOutOfBoundsException: Index 0 out of bounds for length 0`. Workaround: delete the stale cache with `rm -rf web/build/kotlin/compileKotlinWasmJs` and rebuild.
 
 ### Ktor 3.x
 - Use `WebSocketServerSession` (not `DefaultWebSocketServerSession`).
