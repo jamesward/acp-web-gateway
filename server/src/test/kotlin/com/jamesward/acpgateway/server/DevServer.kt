@@ -1,5 +1,6 @@
 package com.jamesward.acpgateway.server
 
+import com.jamesward.acpgateway.mcp.*
 import com.jamesward.acpgateway.shared.*
 import dev.kilua.rpc.applyRoutes
 import dev.kilua.rpc.initRpc
@@ -13,6 +14,8 @@ import io.ktor.server.http.content.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -154,11 +157,26 @@ fun Application.devModule(
         maxFrameSize = Long.MAX_VALUE
     }
 
+    installMcpJsonSerializer()
+
     initRpc {
         registerService<IChatService> { _, _ ->
             DevChatServiceImpl(holder, debug, commandHandler, internalCommands, promptInterceptor, captureCallback)
         }
     }
+
+    val mcpScope = CoroutineScope(Dispatchers.Default)
+    val mcpTaskManager = TaskManager(
+        executorFactory = {
+            DevTaskExecutor(
+                sessionProvider = { holder.manager?.sessions?.values?.firstOrNull() },
+                scope = mcpScope,
+            )
+        },
+        scope = mcpScope,
+    )
+
+    installMcp(path = "/mcp", mcpTaskManager)
 
     routing {
         get("/") {

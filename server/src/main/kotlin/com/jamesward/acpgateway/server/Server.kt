@@ -1,5 +1,6 @@
 package com.jamesward.acpgateway.server
 
+import com.jamesward.acpgateway.mcp.*
 import com.jamesward.acpgateway.shared.*
 import dev.kilua.rpc.applyRoutes
 import dev.kilua.rpc.initRpc
@@ -58,7 +59,35 @@ fun Application.module(
         maxFrameSize = Long.MAX_VALUE
     }
 
-    initRpc {
+    installMcpJsonSerializer()
+
+    val mcpTaskManagers = ConcurrentHashMap<UUID, TaskManager>()
+
+    // MCP Streamable HTTP endpoint per relay session
+    val mcpScope = CoroutineScope(Dispatchers.Default)
+    installMcpWithLookup(path = "/s/{sessionId}/mcp") { sessionIdStr ->
+        val sessionId = try { UUID.fromString(sessionIdStr) } catch (_: Exception) { null }
+            ?: return@installMcpWithLookup null
+        val relay = relaySessions[sessionId] ?: return@installMcpWithLookup null
+        mcpTaskManagers.getOrPut(sessionId) {
+            val relayAccess = object : RelaySessionAccess {
+                override val backendWs get() = relay.backendWs
+                override val rpcChannels get() = relay.rpcChannels
+                override val messageCache get() = relay.messageCache
+            }
+            TaskManager(
+                executorFactory = { RelayTaskExecutor(relayAccess, mcpScope) },
+                scope = mcpScope,
+            )
+        }
+    }
+
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    initRpc(Json {
+        explicitNulls = false
+        encodeDefaults = true
+        ignoreUnknownKeys = true
+    }) {
         registerService<IChatService> { call, _ ->
             val sessionId = call.parameters["sessionId"]?.let {
                 try { UUID.fromString(it) } catch (_: Exception) { null }
@@ -191,6 +220,7 @@ fun Application.module(
                         try { conn.close(CloseReason(CloseReason.Codes.GOING_AWAY, "Agent disconnected")) } catch (_: Exception) {}
                     }
                     relaySessions.remove(sessionId)
+                    mcpTaskManagers.remove(sessionId)
                     logger.info("CLI agent disconnected from relay session {}", sessionId)
                     onSessionCountChanged?.invoke()
                 }

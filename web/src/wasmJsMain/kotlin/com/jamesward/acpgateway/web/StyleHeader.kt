@@ -70,7 +70,6 @@ internal fun IComponent.headerStyles() {
         setStyle("border-color", "var(--text-secondary)")
     }
     globalStyle(selector = "header .btn-github") {
-        setStyle("margin-left", "auto")
         setStyle("display", "inline-flex")
         setStyle("align-items", "center")
         setStyle("padding", "4px 12px")
@@ -94,6 +93,31 @@ internal fun IComponent.headerStyles() {
     }
     globalStyle(selector = "header .btn-theme") {
         fontSize = 14.px
+    }
+    globalStyle(selector = "header .mcp-container") {
+        position = Position.Relative
+        setStyle("display", "inline-flex")
+        setStyle("margin-left", "auto")
+    }
+    globalStyle(selector = "header .btn-mcp") {
+        setStyle("display", "inline-flex")
+        setStyle("align-items", "center")
+        fontSize = 14.px
+    }
+    globalStyle(selector = "header .mcp-url-popup") {
+        position = Position.Absolute
+        setStyle("top", "100%")
+        setStyle("right", "0")
+        marginTop = 4.px
+        setStyle("padding", "6px 12px")
+        background = Background(color = bgCard)
+        border = Border(1.px, BorderStyle.Solid, borderSubtle)
+        borderRadius = radius
+        setStyle("box-shadow", "0 4px 12px rgba(0,0,0,0.3)")
+        whiteSpace = WhiteSpace.Nowrap
+        fontSize = 12.px
+        color = textPrimary
+        zIndex = 50
     }
 }
 

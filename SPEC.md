@@ -280,6 +280,38 @@ The server uses `--shutdown-on-idle` to automatically exit when no sessions are 
 - Native image reachability metadata for Ktor CIO, Logback, and kotlinx-serialization in `cli/src/main/resources/META-INF/native-image/`
 - The `org.graalvm.buildtools.native` Gradle plugin provides the `nativeCompile` task
 
+## MCP Server
+
+The gateway exposes an MCP (Model Context Protocol) Streamable HTTP endpoint that provides a task-based API for interacting with ACP agents. This allows MCP clients to send prompts and monitor agent responses programmatically.
+
+**Note:** ACP tasks are not yet natively supported in the ACP protocol. The gateway simulates tasks by mapping each prompt round-trip to a tracked task object.
+
+### Endpoints
+
+- **Dev mode:** `/mcp`
+- **Relay mode:** `/s/{sessionId}/mcp`
+
+### MCP Tools
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_acp_tasks` | (none) | List all tasks in the session |
+| `create_acp_task` | `prompt: String` | Send a prompt to the agent, returns a task ID. Poll `get_acp_task` for updates. |
+| `get_acp_task` | `taskId: String` | Get task state: response text, thinking, tool calls, pending permissions, errors |
+| `cancel_acp_task` | `taskId: String` | Cancel a running task |
+
+### Task States
+
+`Created` → `Working` → `Completed` / `Failed` / `Cancelled`
+
+### Module
+
+The MCP server lives in the `mcp-server` Gradle module (`com.jamesward.acpgateway.mcp`). It depends on `shared` and the MCP Kotlin SDK (`io.modelcontextprotocol:kotlin-sdk:0.9.0`). The `server` module depends on `mcp-server` and mounts the Ktor routes.
+
+### UI
+
+The web client shows an MCP icon in the header. Clicking it displays the MCP endpoint URL for the current session.
+
 ## Future
 
 - Versioning scheme: `<protocol>.<date>.<seq>` with `Version.kt` generated at build time, protocol version constant in `shared/build.gradle.kts`, Docker image tagged with both `<full-version>` and `<protocol-version>`
@@ -294,7 +326,7 @@ The server uses `--shutdown-on-idle` to automatically exit when no sessions are 
 - Audio recording support (MediaRecorder API)
 - Additional functionality
   - Skills Directory with SkillsJars
-  - MCP servers
+  - MCP server enhancements: permission response tool, native ACP task support when available
 - Autopilot (partially implemented: `/autopilot` command in dev/test scope takes a screenshot of its own UI and asks the agent to evaluate it)
   - Have the agent use its own UI to improve itself iteratively, finding more improvements along the way
 - Build isolation

@@ -71,6 +71,9 @@ class App : Application() {
     private var screenshotEnabled by mutableStateOf(false)
     private var reloading by mutableStateOf(false)
 
+    // MCP endpoint state
+    private var showMcpUrl by mutableStateOf(false)
+
     // Autocomplete state
     private var availableCommands by mutableStateOf(listOf<CommandInfo>())
     private var autocompleteFiltered by mutableStateOf(listOf<CommandInfo>())
@@ -388,13 +391,21 @@ class App : Application() {
                 }
             }
 
-            // GitHub link
-            tag("a") {
-                className("btn-github")
-                attribute("href", "https://github.com/jamesward/acp-web-gateway")
-                attribute("target", "_blank")
-                title("View on GitHub")
-                rawHtml("""<svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>""")
+            // MCP endpoint
+            div(className = "mcp-container") {
+                button {
+                    className("btn-mcp")
+                    title("MCP Endpoint")
+                    onClick { showMcpUrl = !showMcpUrl }
+                    rawHtml("""<svg height="16" width="16" viewBox="0 0 195 195" fill="none"><path d="M25 97.8528L92.8823 29.9706C102.255 20.598 117.451 20.598 126.823 29.9706V29.9706C136.196 39.3431 136.196 54.5391 126.823 63.9117L75.5581 115.177" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path d="M76.2653 114.47L126.823 63.9117C136.196 54.5391 151.392 54.5391 160.765 63.9117L161.118 64.2652C170.491 73.6378 170.491 88.8338 161.118 98.2063L99.7248 159.6C96.6006 162.724 96.6006 167.789 99.7248 170.913L112.331 183.52" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path d="M109.853 46.9411L59.6482 97.1457C50.2757 106.518 50.2757 121.714 59.6482 131.087V131.087C69.0208 140.459 84.2168 140.459 93.5894 131.087L143.794 80.8822" stroke="currentColor" stroke-width="12" stroke-linecap="round"/></svg>""")
+                }
+                if (showMcpUrl) {
+                    val pathname = location.pathname.trimEnd('/')
+                    val mcpUrl = "${location.origin}${if (pathname == "") "/mcp" else "$pathname/mcp"}"
+                    div(className = "mcp-url-popup") {
+                        span { +mcpUrl }
+                    }
+                }
             }
 
             // Theme toggle
@@ -412,6 +423,15 @@ class App : Application() {
                 className("btn-theme")
                 title(themeLabel)
                 onClick { themePreference = cycleTheme(themePreference) }
+            }
+
+            // GitHub link
+            tag("a") {
+                className("btn-github")
+                attribute("href", "https://github.com/jamesward/acp-web-gateway")
+                attribute("target", "_blank")
+                title("View on GitHub")
+                rawHtml("""<svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>""")
             }
         }
 

@@ -19,25 +19,31 @@ val kiluaRpcVersion = "0.0.42"
 
 dependencies {
     implementation(project(":shared"))
+    implementation("io.modelcontextprotocol:kotlin-sdk:0.9.0")
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-cio:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
     implementation("io.ktor:ktor-server-websockets:$ktorVersion")
+    implementation("io.ktor:ktor-server-sse:$ktorVersion")
     implementation("io.ktor:ktor-server-html-builder:$ktorVersion")
     implementation("dev.kilua:kilua-rpc-ktor-jvm:$kiluaRpcVersion")
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
     testImplementation("io.ktor:ktor-client-cio:$ktorVersion")
     testImplementation("io.ktor:ktor-client-websockets:$ktorVersion")
+    testImplementation("io.modelcontextprotocol.sdk:mcp:1.1.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.orange-buffalo:testcontainers-playwright:0.12.0")
+    testImplementation("org.testcontainers:testcontainers:1.21.1")
 }
 
 tasks.test {
     exclude("**/AgentIntegrationTest*")
     exclude("**/BrowserIntegrationTest*")
     exclude("**/CliRelayIntegrationTest*")
+    exclude("**/McpServerTest*")
+    exclude("**/McpServerTsTest*")
 }
 
 tasks.register<Test>("integrationTest") {
@@ -60,6 +66,19 @@ tasks.register<Test>("cliRelayTest") {
     testClassesDirs = tasks.test.get().testClassesDirs
     classpath = tasks.test.get().classpath
     include("**/CliRelayIntegrationTest*")
+    testLogging {
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        events(org.gradle.api.tasks.testing.logging.TestLogEvent.STARTED, org.gradle.api.tasks.testing.logging.TestLogEvent.PASSED, org.gradle.api.tasks.testing.logging.TestLogEvent.SKIPPED, org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED)
+    }
+}
+
+tasks.register<Test>("mcpTest") {
+    description = "Runs MCP Streamable HTTP server tests (no real agent needed)"
+    group = "verification"
+    testClassesDirs = tasks.test.get().testClassesDirs
+    classpath = tasks.test.get().classpath
+    include("**/McpServerTest*", "**/McpServerTsTest*")
     testLogging {
         showStandardStreams = true
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
