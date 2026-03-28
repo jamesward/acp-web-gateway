@@ -19,7 +19,7 @@ val kiluaRpcVersion = "0.0.42"
 
 dependencies {
     implementation(project(":shared"))
-    implementation("io.modelcontextprotocol:kotlin-sdk:0.9.0")
+    implementation("io.modelcontextprotocol:kotlin-sdk:0.10.0")
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-cio:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
