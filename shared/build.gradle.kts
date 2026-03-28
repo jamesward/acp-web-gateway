@@ -6,7 +6,7 @@ plugins {
     id("dev.kilua.rpc")
 }
 
-val ktorVersion = "3.4.1"
+val ktorVersion = "3.4.2"
 val acpSdkVersion = "0.17.1"
 val kiluaRpcVersion = "0.0.42"
 
