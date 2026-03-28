@@ -34,7 +34,7 @@ jobs:
           distribution: 'graalvm'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: gradle
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Build native CLI (Unix)
         if: runner.os != 'Windows'
@@ -87,7 +87,7 @@ jobs:
           distribution: temurin
           java-version: 25
           cache: gradle
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Build and push multi-arch image
         run: |
