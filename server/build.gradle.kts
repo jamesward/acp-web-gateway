@@ -35,7 +35,7 @@ dependencies {
     testImplementation("io.modelcontextprotocol.sdk:mcp:1.1.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.orange-buffalo:testcontainers-playwright:0.12.0")
-    testImplementation("org.testcontainers:testcontainers:1.21.1")
+    testImplementation("org.testcontainers:testcontainers:2.0.4")
 }
 
 tasks.test {
