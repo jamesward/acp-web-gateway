@@ -92,6 +92,7 @@ sealed class WsMessage {
         val cwd: String? = null,
         val agentWorking: Boolean = false,
         val seq: Long = 0,
+        val epoch: String = "",
     ) : WsMessage()
 
     @Serializable
@@ -146,7 +147,7 @@ sealed class WsMessage {
     /** Client → server: resume from a given sequence number on reconnect. */
     @Serializable
     @SerialName("resume_from")
-    data class ResumeFrom(val lastSeq: Long) : WsMessage()
+    data class ResumeFrom(val lastSeq: Long, val epoch: String = "") : WsMessage()
 }
 
 @Serializable

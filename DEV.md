@@ -8,6 +8,12 @@
 
 Access at: http://localhost:8080/
 
+Or run with overrides:
+
+```
+./gradlew :server:devRun -Pargs="--agent-command \"kiro-cli acp\" --debug --dev"
+```
+
 
 ## Run with CLI & Docker server
 

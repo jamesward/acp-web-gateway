@@ -160,9 +160,14 @@ class ChatServiceImpl(
                         if (msg is WsMessage.ChangeAgent) {
                             relay.switchInProgress = true
                         }
+                        val text = relayJson.encodeToString(WsMessage.serializer(), msg)
+                        // Broadcast Cancel/PermissionResponse to other frontends so they stay in sync
+                        if (msg is WsMessage.Cancel || msg is WsMessage.PermissionResponse) {
+                            if (msg is WsMessage.PermissionResponse) relay.messageCache.add(text)
+                            relay.broadcastToFrontends(msg, text, exclude = relayChannel)
+                        }
                         val backend = relay.backendWs ?: continue
                         try {
-                            val text = relayJson.encodeToString(WsMessage.serializer(), msg)
                             backend.send(Frame.Text(text))
                         } catch (e: Exception) {
                             logger.warn("Failed to forward message to relay backend: {}", e.message)

@@ -42,6 +42,22 @@ class RelaySession(val sessionId: UUID) {
     /** Typed channels for RPC clients bridging to this relay (used by ChatServiceImpl). */
     val rpcChannels: MutableSet<SendChannel<WsMessage>> = ConcurrentHashMap.newKeySet()
     val messageCache = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
+    /** Broadcast a message to all frontend connections and RPC channels except [exclude]. */
+    suspend fun broadcastToFrontends(msg: WsMessage, text: String, exclude: Any? = null) {
+        val dead = mutableListOf<WebSocketSession>()
+        for (conn in frontendConnections) {
+            if (conn === exclude) continue
+            try { conn.send(Frame.Text(text)) } catch (_: Exception) { dead.add(conn) }
+        }
+        frontendConnections.removeAll(dead.toSet())
+        val deadChannels = mutableListOf<SendChannel<WsMessage>>()
+        for (ch in rpcChannels) {
+            if (ch === exclude) continue
+            try { ch.trySend(msg) } catch (_: Exception) { deadChannels.add(ch) }
+        }
+        rpcChannels.removeAll(deadChannels.toSet())
+    }
 }
 
 private val logger = LoggerFactory.getLogger("Server")
@@ -254,11 +270,18 @@ fun Application.module(
             try {
                 incoming.consumeEach { frame ->
                     if (frame is Frame.Text) {
+                        val text = frame.readText()
                         val backend = relay.backendWs
                         if (backend != null) {
                             try {
-                                backend.send(Frame.Text(frame.readText()))
+                                backend.send(Frame.Text(text))
                             } catch (_: Exception) {}
+                        }
+                        // Broadcast Cancel/PermissionResponse to other frontends so they stay in sync
+                        val msg = try { Json.decodeFromString(WsMessage.serializer(), text) } catch (_: Exception) { null }
+                        if (msg is WsMessage.Cancel || msg is WsMessage.PermissionResponse) {
+                            if (msg is WsMessage.PermissionResponse) relay.messageCache.add(text)
+                            relay.broadcastToFrontends(msg, text, exclude = this)
                         }
                     }
                 }

@@ -403,5 +403,15 @@ fun startDevServer(config: DevServerConfig) {
 }
 
 fun main(args: Array<String>) {
-    startDevServer(parseDevServerConfig(args))
+    val config = parseDevServerConfig(args)
+    val autoPilot = AutoPilot(config.port)
+
+    Runtime.getRuntime().addShutdownHook(Thread({
+        autoPilot.close()
+    }, "autopilot-shutdown"))
+
+    startDevServer(config.copy(
+        commandHandler = { prompt, session -> autoPilot.handleCommand(prompt, session) },
+        internalCommands = listOf(CommandInfo("autopilot", "Take a screenshot of the UI and send it to the agent for analysis")),
+    ))
 }

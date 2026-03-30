@@ -140,14 +140,16 @@ Do NOT fix UI bugs without a test. If you can't write a test first, explain why 
 ### Test layers (fastest to slowest)
 
 1. **Rendering flow tests** (`server/src/test/.../RenderingFlowTest.kt`) — Verify the WebSocket handler sends the correct sequence of `WsMessage` types for prompt round-trips. Uses `ControllableFakeClientSession` to simulate ACP events and `handleChatChannels` with in-memory channels. Run with `./gradlew :server:test --tests "*.RenderingFlowTest"`.
-2. **Server tests** (`ServerTest.kt`) — HTTP endpoints, channel-based chat handler, file attachment handling. Run with `./gradlew :server:test`.
-3. **Browser integration tests** (`BrowserIntegrationTest.kt`) — Full E2E with Playwright in Docker. Tests page load, WebSocket connection. Run with `./gradlew :server:browserTest`.
-4. **Agent integration tests** (`AgentIntegrationTest.kt`) — Real ACP agent, slow. Run with `./gradlew :server:integrationTest -Dtest.acp.agent=github-copilot-cli`.
+2. **Multi-client state sync tests** (`MultiClientStateSyncTest.kt`) — Verify that multiple browser clients connected to the same session stay in sync. Tests Cancel/PermissionResponse broadcast, late-join replay of PlanUpdate and SessionInfo title, and relay-mode broadcast. Run with `./gradlew :server:test --tests "*.MultiClientStateSyncTest"`. **These tests must never be broken — multi-client sync is a hard requirement.**
+3. **Server tests** (`ServerTest.kt`) — HTTP endpoints, channel-based chat handler, file attachment handling. Run with `./gradlew :server:test`.
+4. **Browser integration tests** (`BrowserIntegrationTest.kt`) — Full E2E with Playwright in Docker. Tests page load, WebSocket connection. Run with `./gradlew :server:browserTest`.
+5. **Agent integration tests** (`AgentIntegrationTest.kt`) — Real ACP agent, slow. Run with `./gradlew :server:integrationTest -Dtest.acp.agent=github-copilot-cli`.
 
 ### When to add tests for UI changes
 - **Changed WebSocketHandler.kt message logic** → Add/update rendering flow tests verifying WsMessage sequence.
 - **Changed App.kt (client-side composables)** → Add/update browser integration tests.
 - **Changed message types (Message.kt)** → Update shared tests and rendering flow tests.
+- **Changed multi-client state sync logic** (Cancel/PermissionResponse broadcast, late-join replay, relay messageCache) → Update `MultiClientStateSyncTest`. These tests are mandatory — multi-client sync must never regress.
 
 ## Tech Gotchas
 

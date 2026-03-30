@@ -14,6 +14,7 @@ data class TurnState(
     val thoughtText: String,
     val responseText: String,
     val toolEntries: List<ToolCallDisplay>,
+    val planEntries: List<PlanEntryInfo> = emptyList(),
 )
 
 interface SessionStore {

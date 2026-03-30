@@ -198,11 +198,13 @@ suspend fun handleChatChannels(
 
     // Check for ResumeFrom as first message (with short timeout)
     var resumeFromSeq = 0L
+    var resumeEpochMatch = false
     var pendingMessage: WsMessage? = null
     val firstMsg = withTimeoutOrNull(500) { input.receiveCatching().getOrNull() }
     if (firstMsg is WsMessage.ResumeFrom) {
         resumeFromSeq = firstMsg.lastSeq
-        logger.info("Client resuming from seq={}", resumeFromSeq)
+        resumeEpochMatch = firstMsg.epoch.isNotEmpty() && firstMsg.epoch == session.epoch
+        logger.info("Client resuming from seq={}, epoch={}, match={}", resumeFromSeq, firstMsg.epoch, resumeEpochMatch)
     } else if (firstMsg != null) {
         // Not a ResumeFrom — save it so we don't lose it
         pendingMessage = firstMsg
@@ -212,7 +214,7 @@ suspend fun handleChatChannels(
         val promptStartTime = session.store.getPromptStartTime(session.id)
         val isWorking = promptStartTime > 0L
 
-        output.send(WsMessage.Connected(manager.agentName, manager.agentVersion, session.cwd, agentWorking = isWorking, seq = session.currentSeq))
+        output.send(WsMessage.Connected(manager.agentName, manager.agentVersion, session.cwd, agentWorking = isWorking, seq = session.currentSeq, epoch = session.epoch))
 
         if (availableAgents.isNotEmpty()) {
             output.send(WsMessage.AvailableAgents(availableAgents, currentAgentId))
@@ -230,9 +232,9 @@ suspend fun handleChatChannels(
             output.send(WsMessage.AvailableCommands(session.allCommands))
         }
 
-        // Check if we can do a delta resume from the turn buffer
-        val bufferedMessages = if (resumeFromSeq > 0) session.getTurnBufferSince(resumeFromSeq) else emptyList()
-        val canResume = resumeFromSeq > 0 && bufferedMessages.isNotEmpty()
+        // Check if we can do a delta resume from the turn buffer (requires epoch match)
+        val bufferedMessages = if (resumeFromSeq > 0 && resumeEpochMatch) session.getTurnBufferSince(resumeFromSeq) else emptyList()
+        val canResume = resumeFromSeq > 0 && resumeEpochMatch && bufferedMessages.isNotEmpty()
 
         if (canResume) {
             // Delta resume: replay only missed messages from the turn buffer
@@ -289,6 +291,9 @@ suspend fun handleChatChannels(
                             location = toolEntry.location,
                         ))
                     }
+                    if (turnState.planEntries.isNotEmpty()) {
+                        output.send(WsMessage.PlanUpdate(turnState.planEntries))
+                    }
                 } else {
                     val toolCalls = session.store.getToolCalls(session.id)
                     for ((id, info) in toolCalls) {
@@ -302,6 +307,12 @@ suspend fun handleChatChannels(
         val pendingPerm = session.activePermission
         if (pendingPerm != null) {
             output.send(pendingPerm)
+        }
+
+        // Replay session title if set
+        val title = session.sessionTitle
+        if (title != null) {
+            output.send(WsMessage.SessionInfo(title = title))
         }
 
         // Add to broadcast set AFTER replay to avoid interleaving live broadcasts with history
@@ -409,6 +420,12 @@ private suspend fun handleClientMessage(
             session.store.clearToolCalls(session.id)
             session.store.setPromptStartTime(session.id, 0L)
             session.store.clearTurnState(session.id)
+            // Broadcast Cancel to all other connected clients so they dismiss the permission dialog
+            for (conn in session.connections) {
+                if (conn !== output) {
+                    try { conn.send(WsMessage.Cancel) } catch (_: Exception) {}
+                }
+            }
             session.broadcast(WsMessage.TurnComplete("cancelled"))
             session.clearTurnBuffer()
         }
@@ -512,6 +529,7 @@ private suspend fun handlePrompt(
         val msgId = "msg-$turnCounter"
         val thoughtId = "thought-$turnCounter"
         val toolBlockId = "tools-$turnCounter"
+        var planEntries = emptyList<PlanEntryInfo>()
 
         session.store.setTurnState(session.id, TurnState(
             thoughtId = thoughtId,
@@ -534,7 +552,7 @@ private suspend fun handlePrompt(
                                     val usageStr = usage.formatUsage()
                                     // Send only the new chunk (delta), not full accumulated text
                                     session.broadcast(WsMessage.AgentText(msgId = msgId, markdown = content.text, usage = usageStr))
-                                    updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
+                                    updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText, planEntries)
                                 }
                             } else if (content is ContentBlock.Image) {
                                 session.broadcast(WsMessage.AgentImage(msgId = msgId, data = content.data, mimeType = content.mimeType))
@@ -548,7 +566,7 @@ private suspend fun handlePrompt(
                                     val usageStr = usage.formatUsage()
                                     // Send only the new chunk (delta), not full accumulated text
                                     session.broadcast(WsMessage.AgentThought(thoughtId = thoughtId, markdown = content.text, usage = usageStr))
-                                    updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
+                                    updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText, planEntries)
                                 }
                             } else if (content is ContentBlock.Image) {
                                 session.broadcast(WsMessage.AgentImage(msgId = msgId, data = content.data, mimeType = content.mimeType))
@@ -585,7 +603,7 @@ private suspend fun handlePrompt(
                             toolContent?.images?.forEach { img ->
                                 session.broadcast(WsMessage.AgentImage(msgId = msgId, data = img.data, mimeType = img.mimeType))
                             }
-                            updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
+                            updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText, planEntries)
                         }
                         is SessionUpdate.ToolCallUpdate -> {
                             val tcId = update.toolCallId.value
@@ -627,7 +645,7 @@ private suspend fun handlePrompt(
                             updateContent?.images?.forEach { img ->
                                 session.broadcast(WsMessage.AgentImage(msgId = msgId, data = img.data, mimeType = img.mimeType))
                             }
-                            updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText)
+                            updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText, planEntries)
                         }
                         is SessionUpdate.UsageUpdate -> {
                             usage.used = update.used
@@ -656,7 +674,9 @@ private suspend fun handlePrompt(
                                     },
                                 )
                             }
+                            planEntries = entries
                             session.broadcast(WsMessage.PlanUpdate(entries))
+                            updateTurnState(session, thoughtId, msgId, toolBlockId, toolEntries, thoughtText, responseText, planEntries)
                         }
                         is SessionUpdate.AvailableCommandsUpdate -> {
                             val commands = update.availableCommands.map { cmd ->
@@ -683,6 +703,7 @@ private suspend fun handlePrompt(
                         }
                         is SessionUpdate.SessionInfoUpdate -> {
                             if (update.title != null) {
+                                session.sessionTitle = update.title
                                 session.broadcast(WsMessage.SessionInfo(title = update.title))
                             }
                         }
@@ -749,6 +770,7 @@ private suspend fun updateTurnState(
     toolEntries: List<ToolCallDisplay>,
     thoughtText: StringBuilder,
     responseText: StringBuilder,
+    planEntries: List<PlanEntryInfo> = emptyList(),
 ) {
     session.store.setTurnState(session.id, TurnState(
         thoughtId = thoughtId,
@@ -757,6 +779,7 @@ private suspend fun updateTurnState(
         thoughtText = thoughtText.toString(),
         responseText = responseText.toString(),
         toolEntries = toolEntries.toList(),
+        planEntries = planEntries,
     ))
 }
 

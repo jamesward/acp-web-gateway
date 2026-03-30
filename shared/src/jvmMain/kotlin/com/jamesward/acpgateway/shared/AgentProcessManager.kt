@@ -68,6 +68,10 @@ class GatewaySession(
     @Volatile
     var activePermission: WsMessage.PermissionRequest? = null
 
+    // Track the session title so reconnecting clients can see it
+    @Volatile
+    var sessionTitle: String? = null
+
     // Gateway-internal slash commands (e.g. /simulate, /autopilot)
     @Volatile
     var internalCommands: List<CommandInfo> = emptyList()
@@ -92,6 +96,9 @@ class GatewaySession(
     var captureListener: ((WsMessage) -> Unit)? = null
 
     // ---- Sequence-based delta streaming ----
+
+    /** Unique identity for this session instance; changes on server restart. */
+    val epoch: String = UUID.randomUUID().toString()
 
     /** Monotonic sequence counter for outbound messages. */
     private val seqCounter = AtomicLong(0)
@@ -173,6 +180,7 @@ class GatewaySession(
                 }
                 is SessionUpdate.SessionInfoUpdate -> {
                     if (notification.title != null) {
+                        sessionTitle = notification.title
                         broadcast(WsMessage.SessionInfo(title = notification.title))
                     }
                 }

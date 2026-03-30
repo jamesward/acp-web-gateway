@@ -40,6 +40,7 @@ class App : Application() {
     private var sessionTitle by mutableStateOf<String?>(null)
     private var reconnectDelay = 1000
     private var lastSeq: Long = 0
+    private var lastEpoch: String = ""
 
     // Conversation state
     private var messages by mutableStateOf(listOf<ChatMessage>())
@@ -138,9 +139,9 @@ class App : Application() {
                         connected = true
 
                         // Send ResumeFrom if we have a prior seq position
-                        didResume = lastSeq > 0
+                        didResume = lastSeq > 0 && lastEpoch.isNotEmpty()
                         if (didResume) {
-                            sendChannel.send(WsMessage.ResumeFrom(lastSeq))
+                            sendChannel.send(WsMessage.ResumeFrom(lastSeq, lastEpoch))
                         }
 
                         try {
@@ -204,6 +205,12 @@ class App : Application() {
                     switchingAgent = null
                     agentError = null
                 }
+                // Detect session mismatch: epoch changed means server restarted or different session
+                if (didResume && msg.epoch != lastEpoch) {
+                    didResume = false
+                    lastSeq = 0
+                }
+                lastEpoch = msg.epoch
                 if (!didResume) {
                     messages = emptyList()
                     collapseBeforeIndex = 0
@@ -342,9 +349,12 @@ class App : Application() {
                 }
             }
             // Client→server messages — not expected from the server
-            is WsMessage.Prompt, is WsMessage.Cancel,
-            is WsMessage.PermissionResponse, is WsMessage.ChangeAgent,
+            is WsMessage.Prompt, is WsMessage.ChangeAgent,
             is WsMessage.FileListRequest, is WsMessage.ResumeFrom -> {}
+            is WsMessage.Cancel -> {
+                permissionRequest = null
+                planFileContent = null
+            }
         }
     }
 
@@ -553,7 +563,11 @@ class App : Application() {
             },
             onSubmit = {
                 dismissAutocomplete()
-                if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+                if (agentWorking) {
+                    sendWs(WsMessage.Cancel)
+                    permissionRequest = null
+                    planFileContent = null
+                } else sendPrompt()
             },
             onPromptInput = { value ->
                 promptText = value
@@ -621,7 +635,11 @@ class App : Application() {
                         }
                     } else {
                         dismissAutocomplete()
-                        if (agentWorking) sendWs(WsMessage.Cancel) else sendPrompt()
+                        if (agentWorking) {
+                            sendWs(WsMessage.Cancel)
+                            permissionRequest = null
+                            planFileContent = null
+                        } else sendPrompt()
                     }
                 }
             },

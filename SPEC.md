@@ -96,9 +96,34 @@ Both local and proxy modes support automatic reconnection with no user action re
 2. **On disconnect**, the browser retries with exponential backoff (1s, 2s, 4s, ... capped at 30s). The header title changes to "Reconnecting…" while disconnected.
 3. **On reconnect**, the browser sends a `ResumeFrom` message with `lastSeq` (the last sequence number it received). The server checks the turn buffer for messages since that sequence.
 4. **Delta resume**: If the turn buffer has messages after `lastSeq`, only those are replayed (efficient catch-up within the current turn).
-5. **Full replay**: If `lastSeq` is too old or zero, the server replays complete chat history from the session store, then current turn state (in-progress thoughts, text, tool calls).
+5. **Full replay**: If `lastSeq` is too old or zero, the server replays complete chat history from the session store, then current turn state (in-progress thoughts, text, tool calls, plan).
 6. **Pending permission dialogs** are re-sent on reconnect — the server tracks `activePermission` per session.
-7. **Multiple browsers** can connect to the same session. Each tracks its own `lastSeq`. Disconnection of one browser doesn't affect others.
+7. **Session title** is re-sent on reconnect — the server tracks `sessionTitle` per session.
+8. **Multiple browsers** can connect to the same session. Each tracks its own `lastSeq`. Disconnection of one browser doesn't affect others.
+
+#### Multi-Client State Synchronization
+
+All connected clients must stay in sync at all times. This is a hard requirement — clients must never get out of sync, even across disconnect/reconnects and flaky connections.
+
+**Client-initiated actions that affect shared state must be broadcast to all other clients:**
+
+- `Cancel` — When one client cancels a turn, all other clients receive `Cancel` so they dismiss any open permission dialog.
+- `PermissionResponse` — When one client responds to a permission dialog, all other clients receive `PermissionResponse` so they dismiss the dialog.
+
+**In direct mode** (`handleChatChannels`):
+- `Cancel` is broadcast to all other connections before `TurnComplete("cancelled")` is sent.
+- `PermissionResponse` is broadcast to all connections via `session.broadcast(wsMsg)`.
+
+**In relay mode** (proxy server):
+- `Cancel` and `PermissionResponse` from any browser client are broadcast to all other frontend connections (raw WS and RPC channels) by the relay server.
+- `PermissionResponse` is also added to `messageCache` so late-joining clients see the request and its resolution in order (no stale dialog).
+
+**Late-joining clients receive full current state:**
+- Chat history (from session store)
+- Current turn in-progress state: thought text, response text, tool calls, plan entries (from `TurnState`)
+- Pending permission dialog (from `activePermission`)
+- Session title (from `sessionTitle`)
+- Current agent mode (from `getCurrentModeId()`)
 
 #### Message Ordering Guarantees
 

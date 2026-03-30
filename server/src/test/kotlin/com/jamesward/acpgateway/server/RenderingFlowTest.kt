@@ -954,8 +954,8 @@ class RenderingFlowTest {
         val input2 = Channel<WsMessage>(Channel.UNLIMITED)
         val output2 = Channel<WsMessage>(Channel.UNLIMITED)
 
-        // Send ResumeFrom as first message
-        input2.send(WsMessage.ResumeFrom(chunk2Seq))
+        // Send ResumeFrom as first message (with matching epoch for delta resume)
+        input2.send(WsMessage.ResumeFrom(chunk2Seq, session.epoch))
 
         val handler2 = launch {
             handleChatChannels(input2, output2, session, manager)
@@ -964,6 +964,7 @@ class RenderingFlowTest {
         val connected2 = output2.receive()
         assertIs<WsMessage.Connected>(connected2)
         assertTrue(connected2.agentWorking, "Should show agent is working")
+        assertEquals(session.epoch, connected2.epoch, "Connected should include session epoch")
 
         // Should receive only chunk3 (delta since chunk2)
         val resumedMsgs = mutableListOf<WsMessage>()
@@ -982,6 +983,49 @@ class RenderingFlowTest {
 
         input2.close()
         handler2.cancel()
+    }
+
+    @Test
+    fun resumeFromWithStaleEpochDoesFullReplay() = runTest {
+        // Simulates server restart: client sends ResumeFrom with old epoch, server has new epoch
+        val command = ProcessCommand("echo", listOf("test"))
+        val manager = AgentProcessManager(command, System.getProperty("user.dir"))
+        val fakeSession = ControllableFakeClientSession()
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val testStore = InMemorySessionStore()
+        val session = GatewaySession(
+            id = java.util.UUID.randomUUID(),
+            clientSession = fakeSession,
+            clientOps = GatewayClientOperations(),
+            cwd = System.getProperty("user.dir"),
+            scope = testScope,
+            store = testStore,
+        )
+        session.ready = true
+        session.startEventForwarding()
+        manager.sessions[session.id] = session
+        manager.agentName = "test-agent"
+        manager.agentVersion = "1.0.0"
+
+        val input = Channel<WsMessage>(Channel.UNLIMITED)
+        val output = Channel<WsMessage>(Channel.UNLIMITED)
+
+        // Client sends ResumeFrom with a stale epoch from a previous server lifetime
+        input.send(WsMessage.ResumeFrom(5, "old-epoch-from-previous-server"))
+
+        val handler = launch {
+            handleChatChannels(input, output, session, manager)
+        }
+
+        val connected = output.receive()
+        assertIs<WsMessage.Connected>(connected)
+        // Server's epoch differs from client's — client should detect mismatch and reset
+        assertNotEquals("old-epoch-from-previous-server", connected.epoch)
+        assertTrue(connected.epoch.isNotEmpty(), "Connected should include session epoch")
+        assertFalse(connected.agentWorking, "Fresh session should not be working")
+
+        input.close()
+        handler.cancel()
     }
 
     // ---- Image content blocks ----
