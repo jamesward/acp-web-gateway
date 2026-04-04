@@ -29,7 +29,7 @@ kotlin {
         wasmJsMain.dependencies {
             implementation(project(":shared"))
             implementation("dev.kilua:kilua:0.0.32")
-            implementation("dev.kilua:kilua-rpc-core:0.0.42")
+            implementation("dev.kilua:kilua-rpc-core:0.0.43")
             implementation("dev.kilua:kilua-marked:0.0.32")
             implementation("io.ktor:ktor-client-core:3.4.2")
             implementation("io.ktor:ktor-client-js-wasm-js:3.4.2")
