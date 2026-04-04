@@ -15,7 +15,7 @@ application {
 }
 
 val ktorVersion = "3.4.2"
-val kiluaRpcVersion = "0.0.42"
+val kiluaRpcVersion = "0.0.43"
 
 dependencies {
     implementation(project(":shared"))

@@ -8,7 +8,7 @@ plugins {
 
 val ktorVersion = "3.4.2"
 val acpSdkVersion = "0.17.1"
-val kiluaRpcVersion = "0.0.42"
+val kiluaRpcVersion = "0.0.43"
 
 extensions.configure<dev.kilua.rpc.gradle.KiluaRpcExtension> {
     enableGradleTasks.set(false)
