@@ -77,6 +77,24 @@ fun Application.module(
 
     installMcpJsonSerializer()
 
+    // initRpc installs ContentNegotiation — must be called before MCP SDK's
+    // mcpStatelessStreamableHttp which also installs it (SDK 0.11.0+).
+    // The SDK checks pluginOrNull and skips if already present.
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    initRpc(Json {
+        explicitNulls = false
+        encodeDefaults = true
+        ignoreUnknownKeys = true
+    }) {
+        registerService<IChatService> { call, _ ->
+            val sessionId = call.parameters["sessionId"]?.let {
+                try { UUID.fromString(it) } catch (_: Exception) { null }
+            }
+            ChatServiceImpl(registry, sessionId,
+                relayLookup = { id -> relaySessions[id] })
+        }
+    }
+
     val mcpTaskManagers = ConcurrentHashMap<UUID, TaskManager>()
 
     // MCP Streamable HTTP endpoint per relay session
@@ -95,21 +113,6 @@ fun Application.module(
                 executorFactory = { RelayTaskExecutor(relayAccess, mcpScope) },
                 scope = mcpScope,
             )
-        }
-    }
-
-    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-    initRpc(Json {
-        explicitNulls = false
-        encodeDefaults = true
-        ignoreUnknownKeys = true
-    }) {
-        registerService<IChatService> { call, _ ->
-            val sessionId = call.parameters["sessionId"]?.let {
-                try { UUID.fromString(it) } catch (_: Exception) { null }
-            }
-            ChatServiceImpl(registry, sessionId,
-                relayLookup = { id -> relaySessions[id] })
         }
     }
 
